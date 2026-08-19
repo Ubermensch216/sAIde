@@ -1,12 +1,24 @@
 /**
- * Content Script — 본문 추출과 DOM 조작. 계획서 §5 Phase 3-1 / 5
+ * 주입 스크립트 — 본문 추출과 DOM 조작. 계획서 §5 Phase 3-1 / 5
  *
  * 온디맨드로만 주입된다(background.ts의 executeScript). 상시 주입하지 않는 이유는
  * 성능·프라이버시·심사 셋 다 불리하기 때문이다. 계획서 §3 설계 결정 ②.
+ *
+ * ★ defineContentScript가 아니라 defineUnlistedScript다.
+ *
+ * defineContentScript는 `matches`를 manifest의 host_permissions로 승격시키는데,
+ * `<all_urls>`가 박히면 설계 결정 ②(상시 주입 금지)가 무의미해지고 심사·프라이버시
+ * 모두 불리해진다. unlisted script는 번들만 만들고 manifest에 등록하지 않으므로,
+ * background가 activeTab 권한으로 executeScript 할 때만 실제로 주입된다.
  */
 
 import { Readability } from '@mozilla/readability';
 import { fitToBudget } from '@/lib/extract/budget';
+import {
+  extractYouTubeCaption,
+  isYouTubeWatch,
+  youTubeMeta,
+} from '@/lib/extract/youtube';
 import type {
   ContentToSW,
   ExtractedPage,
@@ -15,14 +27,6 @@ import type {
   SWToContent,
 } from '@/lib/messaging/protocol';
 
-/**
- * ★ defineContentScript가 아니라 defineUnlistedScript다.
- *
- * defineContentScript는 `matches`를 manifest의 host_permissions로 승격시키는데,
- * `<all_urls>`가 박히면 설계 결정 ②(상시 주입 금지)가 무의미해지고 심사·프라이버시
- * 모두 불리해진다. unlisted script는 번들만 만들고 manifest에 등록하지 않으므로,
- * background가 activeTab 권한으로 executeScript 할 때만 실제로 주입된다.
- */
 /** 재주입 가드용 전역 플래그. */
 declare global {
   interface Window {
@@ -37,42 +41,57 @@ export default defineUnlistedScript(() => {
   window.__saideInjected = true;
 
   chrome.runtime.onMessage.addListener((msg: SWToContent, _sender, sendResponse) => {
-    try {
-      if (msg.type === 'EXTRACT') {
+    // 자막 추출이 비동기라 handler 전체를 Promise로 감싼다.
+    (async () => {
+      try {
+        if (msg.type === 'EXTRACT') {
+          sendResponse({
+            type: 'EXTRACTED',
+            payload: await extractPage(msg.budgetTokens),
+          } satisfies ContentToSW);
+        } else if (msg.type === 'ACT') {
+          const { ok, detail } = await performAction(msg.action);
+          sendResponse({ type: 'ACTED', ok, detail } satisfies ContentToSW);
+        }
+      } catch (e) {
         sendResponse({
-          type: 'EXTRACTED',
-          payload: extractPage(msg.budgetTokens),
+          type: 'FAILED',
+          error: { code: 'UNKNOWN', message: String(e) },
         } satisfies ContentToSW);
-      } else if (msg.type === 'ACT') {
-        const { ok, detail } = performAction(msg.action);
-        sendResponse({ type: 'ACTED', ok, detail } satisfies ContentToSW);
       }
-    } catch (e) {
-      sendResponse({
-        type: 'FAILED',
-        error: { code: 'UNKNOWN', message: String(e) },
-      } satisfies ContentToSW);
-    }
-    return true;
+    })();
+    return true; // 비동기 응답을 쓰겠다는 신호
   });
 });
 
 /* ── 추출 ──────────────────────────────────────────────── */
 
-function extractPage(budgetTokens: number): ExtractedPage {
+async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
   let raw = '';
   let method: ExtractMethod = 'readability';
 
-  try {
-    // Readability는 문서를 파괴적으로 수정하므로 반드시 복제본에 돌린다.
-    const clone = document.cloneNode(true) as Document;
-    const article = new Readability(clone).parse();
-    raw = article?.textContent?.trim() ?? '';
-  } catch {
-    raw = '';
+  // ① 유튜브는 Readability로 아무것도 못 건진다. 자막을 먼저 시도한다.
+  if (isYouTubeWatch(location.href)) {
+    const caption = await extractYouTubeCaption();
+    if (caption) {
+      raw = `${youTubeMeta()}\n\n${caption}`;
+      method = 'youtube-caption';
+    }
   }
 
-  // 리더 모드가 실패하는 페이지(SPA, 대시보드 등)가 흔하다. 폴백은 필수다.
+  // ② 리더 모드
+  if (!raw) {
+    try {
+      // Readability는 문서를 파괴적으로 수정하므로 반드시 복제본에 돌린다.
+      const clone = document.cloneNode(true) as Document;
+      const article = new Readability(clone).parse();
+      raw = article?.textContent?.trim() ?? '';
+    } catch {
+      raw = '';
+    }
+  }
+
+  // ③ 폴백 — 리더 모드가 실패하는 페이지(SPA, 대시보드 등)가 흔하다.
   if (raw.length < 200) {
     raw = document.body?.innerText?.trim() ?? '';
     method = 'innerText';
@@ -96,10 +115,10 @@ function extractPage(budgetTokens: number): ExtractedPage {
 
 /* ── 액션 (Phase 5) ────────────────────────────────────── */
 
-function performAction(action: PageAction): { ok: boolean; detail: string } {
+async function performAction(action: PageAction): Promise<{ ok: boolean; detail: string }> {
   switch (action.kind) {
     case 'read_page': {
-      const p = extractPage(2000);
+      const p = await extractPage(2000);
       return { ok: true, detail: p.text };
     }
 
@@ -145,7 +164,7 @@ function performAction(action: PageAction): { ok: boolean; detail: string } {
 
     case 'navigate':
       // background에서 처리한다. 여기 오면 라우팅 버그다.
-      return { ok: false, detail: 'navigate는 content script에서 처리하지 않습니다.' };
+      return { ok: false, detail: 'navigate는 주입 스크립트에서 처리하지 않습니다.' };
   }
 }
 

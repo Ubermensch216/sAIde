@@ -34,8 +34,18 @@ export default defineConfig({
       'tabs',
     ],
 
-    // 로컬 Ollama 외에는 어떤 호스트에도 접근하지 않는다.
+    // 설치 시점에 확정으로 갖는 접근권은 로컬 Ollama뿐이다.
     host_permissions: ['http://localhost:11434/*', 'http://127.0.0.1:11434/*'],
+
+    /**
+     * 페이지 본문 읽기용. 설치할 때는 아무 사이트 권한도 갖지 않고,
+     * 사용자가 "이 페이지 요약" 같은 버튼을 누른 순간에만 해당 사이트를 요청한다.
+     *
+     * ★ activeTab만으로는 불가능하다 — activeTab은 사용자가 그 탭에서 확장을
+     *   직접 호출한 순간에만 부여되고 페이지 이동 시 회수되는데, 사이드패널은
+     *   그 이후로도 계속 열려 있기 때문이다. src/lib/permissions.ts 참조.
+     */
+    optional_host_permissions: ['<all_urls>'],
 
     commands: {
       _execute_action: {

@@ -1,21 +1,25 @@
 /**
- * 입력창. 계획서 Phase 2-3
+ * 입력창. 계획서 Phase 2-3 / 3-6
  *
  * 생성 중에는 전송 버튼이 중단 버튼으로 바뀐다. 별도 버튼을 두면
  * 좁은 사이드패널에서 자리를 낭비하고, 무엇을 눌러야 할지도 모호해진다.
+ *
+ * 값을 부모가 들고 있는 제어 컴포넌트다 — 컨텍스트 메뉴의 '사이드패널로
+ * 보내기'가 선택 텍스트를 입력창에 넣어야 하기 때문이다.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface Props {
   streaming: boolean;
   disabled: boolean;
+  value: string;
+  onChange: (v: string) => void;
   onSend: (text: string) => void;
   onStop: () => void;
 }
 
-export function Composer({ streaming, disabled, onSend, onStop }: Props) {
-  const [text, setText] = useState('');
+export function Composer({ streaming, disabled, value, onChange, onSend, onStop }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   // 입력 길이에 따라 높이를 늘린다(최대 6줄).
@@ -24,13 +28,12 @@ export function Composer({ streaming, disabled, onSend, onStop }: Props) {
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
-  }, [text]);
+  }, [value]);
 
   const submit = () => {
-    const t = text.trim();
+    const t = value.trim();
     if (!t || streaming || disabled) return;
     onSend(t);
-    setText('');
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -46,10 +49,10 @@ export function Composer({ streaming, disabled, onSend, onStop }: Props) {
       <textarea
         ref={ref}
         rows={1}
-        value={text}
+        value={value}
         placeholder={disabled ? 'Ollama 연결을 먼저 확인하세요' : '무엇이든 물어보세요'}
         disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
         aria-label="메시지 입력"
       />
@@ -61,7 +64,7 @@ export function Composer({ streaming, disabled, onSend, onStop }: Props) {
         <button
           className="send"
           onClick={submit}
-          disabled={!text.trim() || disabled}
+          disabled={!value.trim() || disabled}
           aria-label="보내기"
           title="보내기 (Enter)"
         >

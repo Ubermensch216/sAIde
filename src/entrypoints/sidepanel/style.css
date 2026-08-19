@@ -1,5 +1,6 @@
 @import '@/lib/brand/tokens.css';
 @import './chat.css';
+@import './page.css';
 
 *,
 *::before,

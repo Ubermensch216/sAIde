@@ -1,0 +1,121 @@
+/* 페이지 컨텍스트 UI — Phase 3. 토큰은 tokens.css에서만 정의한다. */
+
+/* ── 빠른 작업 ── */
+
+.pageactions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  max-width: 320px;
+}
+
+.pageactions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.chipbtn {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg);
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.chipbtn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chipbtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chipbtn.attach {
+  align-self: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.pageactions-hint {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.pageactions-hint.restricted {
+  max-width: 30ch;
+}
+
+/* ── 붙어 있는 페이지 칩 ── */
+
+.pagechip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  /* 사이드패널 기둥 모티프 — 앰버의 허용된 세 용처 중 ① 그래픽 */
+  border-left: 3px solid var(--rail);
+}
+
+.pagechip.truncated {
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 25%, transparent);
+  border-left-color: var(--warn);
+}
+
+.pagechip-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.pagechip-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagechip-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 절단 고지는 자리를 아끼려고 줄이지 않는다 — 계획서 §6 완료 기준 */
+.pagechip-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.pagechip-x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--fg-muted);
+}
+
+.pagechip-x:hover {
+  background: var(--surface);
+  color: var(--fg);
+}

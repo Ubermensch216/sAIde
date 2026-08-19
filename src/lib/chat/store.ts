@@ -14,10 +14,11 @@ import { streamChat } from '@/lib/ollama/stream';
 import { OllamaError } from '@/lib/ollama/errors';
 import {
   addMessage,
+  createConversation,
+  db,
   deleteMessagesFrom,
-  getOrCreateForTab,
+  findForTab,
   listMessages,
-  renameConversation,
   titleFrom,
   type Conversation,
   type StoredMessage,
@@ -35,6 +36,12 @@ export interface UiMessage extends Omit<StoredMessage, 'id'> {
 
 interface ChatState {
   conversation: Conversation | null;
+  /**
+   * 아직 저장되지 않은 대화의 소속 정보.
+   * 사이드패널은 탭마다 열리므로, 실제로 말이 오가기 전에는 레코드를 만들지
+   * 않는다. 첫 메시지를 보낼 때 이 정보로 대화를 생성한다.
+   */
+  pending: { tabId: number; url: string } | null;
   messages: UiMessage[];
 
   /** 이 대화에 붙어 있는 페이지. 대화 내내 동일하게 유지된다(KV 캐시). */
@@ -64,6 +71,7 @@ interface ChatState {
 
 export const useChat = create<ChatState>((set, get) => ({
   conversation: null,
+  pending: null,
   messages: [],
   page: null,
   extracting: false,
@@ -80,13 +88,17 @@ export const useChat = create<ChatState>((set, get) => ({
     // 섞여 들어가는 것이 훨씬 나쁘다.
     get().stop();
 
-    const conversation = await getOrCreateForTab(tabId, url);
-    const stored = await listMessages(conversation.id);
+    // ★ 여기서 대화를 만들지 않는다. 사이드패널은 탭이 열릴 때마다 함께
+    //   열리므로, 열자마자 레코드를 만들면 빈 대화방이 탭 수만큼 쌓인다.
+    //   실제 생성은 첫 메시지를 보낼 때(ensureConversation) 한다.
+    const conversation = await findForTab(tabId, url);
+    const stored = conversation ? await listMessages(conversation.id) : [];
 
     // 페이지는 대화를 갈아끼울 때 떼어낸다. 다른 탭의 본문을 물고 가면
     // 모델이 엉뚱한 페이지를 근거로 답하게 된다.
     set({
       conversation,
+      pending: conversation ? null : { tabId, url },
       messages: stored,
       page: null,
       error: null,
@@ -136,7 +148,8 @@ export const useChat = create<ChatState>((set, get) => ({
     const trimmed = text.trim();
     if (!trimmed || get().streaming) return;
 
-    const conv = get().conversation;
+    // 대화는 여기서 처음 저장된다 — 제목까지 한 번에 정해 갱신 쿼리를 아낀다.
+    const conv = await ensureConversation(set, get, trimmed);
     if (!conv) return;
 
     const userMsg: Omit<StoredMessage, 'id'> = {
@@ -146,14 +159,6 @@ export const useChat = create<ChatState>((set, get) => ({
       createdAt: Date.now(),
     };
     const userId = await addMessage(userMsg);
-
-    // 첫 사용자 메시지로 제목을 만든다. 제목 생성에 LLM을 쓰면 21 tok/s를
-    // 제목 따위에 소모하게 된다.
-    if (get().messages.filter((m) => m.role === 'user').length === 0) {
-      const title = titleFrom(trimmed);
-      await renameConversation(conv.id, title);
-      set({ conversation: { ...conv, title } });
-    }
 
     set((s) => ({ messages: [...s.messages, { ...userMsg, id: userId }] }));
     await runGeneration(set, get, settings);
@@ -193,6 +198,32 @@ type Set = (
   partial: Partial<ChatState> | ((s: ChatState) => Partial<ChatState>),
 ) => void;
 type Get = () => ChatState;
+
+/**
+ * 대화 레코드를 확보한다. 아직 없으면 지금 만든다.
+ *
+ * ★ 대화가 DB에 생기는 지점은 여기 한 곳뿐이다.
+ *   패널이 열릴 때가 아니라 **첫 메시지를 보낼 때** 만들어야 빈 대화방이
+ *   쌓이지 않는다. 제목도 이때 함께 정해 별도 갱신 쿼리를 아낀다.
+ */
+async function ensureConversation(
+  set: Set,
+  get: Get,
+  firstMessage: string,
+): Promise<Conversation | null> {
+  const existing = get().conversation;
+  if (existing) return existing;
+
+  const p = get().pending;
+  if (!p) return null;
+
+  const id = await createConversation(p.tabId, p.url, titleFrom(firstMessage));
+  const conv = await db.conversations.get(id);
+  if (!conv) return null;
+
+  set({ conversation: conv, pending: null });
+  return conv;
+}
 
 function toAttached(page: ExtractedPage | null): AttachedPage | null {
   if (!page) return null;

@@ -185,13 +185,19 @@ async function withContentScript(
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: [INJECTED_SCRIPT] });
   } catch (e) {
+    // 대부분은 해당 사이트 권한이 아직 없는 경우다. 원문 오류만 보여주면
+    // 사용자가 무엇을 해야 할지 알 수 없으므로 해결 방법으로 바꿔서 알린다.
+    const raw = String(e);
+    const needsPermission = /must request permission|Cannot access contents/i.test(raw);
     return {
       type: 'FAILED',
-      error: {
-        code: 'TAB_RESTRICTED',
-        message: '페이지에 접근할 수 없습니다.',
-        hint: String(e),
-      },
+      error: needsPermission
+        ? {
+            code: 'HOST_PERMISSION_REQUIRED',
+            message: '이 사이트의 내용을 읽을 권한이 없습니다.',
+            hint: '권한 요청 대화상자에서 허용하거나, 설정에서 모든 사이트를 한 번에 허용하세요.',
+          }
+        : { code: 'TAB_RESTRICTED', message: '페이지에 접근할 수 없습니다.', hint: raw },
     };
   }
 

@@ -65,15 +65,20 @@ export async function createConversation(
 }
 
 /**
- * 해당 탭의 가장 최근 대화를 찾는다. 없으면 만든다.
+ * 해당 탭의 이어갈 만한 대화를 찾는다. **없으면 만들지 않고 null을 준다.**
+ *
+ * ★ 여기서 대화를 만들면 안 된다.
+ *   사이드패널은 탭이 열릴 때마다 함께 열리므로, 열자마자 레코드를 만들면
+ *   말 한마디 오가지 않은 빈 대화방이 탭 수만큼 쌓인다. 실제 저장은 첫
+ *   메시지를 보내는 순간에만 한다(store.ts의 ensureConversation).
  *
  * 탭이 다른 사이트로 이동하면 이전 대화를 이어붙이는 게 부자연스러우므로
- * 호스트가 달라지면 새 대화를 연다.
+ * 호스트가 달라지면 이어가지 않는다.
  */
-export async function getOrCreateForTab(
+export async function findForTab(
   tabId: number,
   url: string,
-): Promise<Conversation> {
+): Promise<Conversation | null> {
   const existing = await db.conversations
     .where('tabId')
     .equals(tabId)
@@ -81,10 +86,26 @@ export async function getOrCreateForTab(
     .sortBy('updatedAt');
 
   const prev = existing[0];
-  if (prev && sameHost(prev.originUrl, url)) return prev;
+  return prev && sameHost(prev.originUrl, url) ? prev : null;
+}
 
-  const id = await createConversation(tabId, url);
-  return (await db.conversations.get(id))!;
+/**
+ * 메시지가 하나도 없는 대화를 지운다.
+ *
+ * 이전 버전이 탭을 열 때마다 빈 대화를 만들어 두었기 때문에 그 잔재를
+ * 청소한다. 지금 로직에서는 생기지 않지만, 생성 직후 실패 같은 경로가
+ * 남아 있을 수 있어 패널을 열 때마다 한 번씩 돌린다.
+ */
+export async function pruneEmptyConversations(): Promise<number> {
+  const all = await db.conversations.toArray();
+  if (all.length === 0) return 0;
+
+  const withMessages = new Set<number>();
+  await db.messages.each((m) => withMessages.add(m.conversationId));
+
+  const empty = all.filter((c) => !withMessages.has(c.id)).map((c) => c.id);
+  if (empty.length > 0) await db.conversations.bulkDelete(empty);
+  return empty.length;
 }
 
 function sameHost(a: string, b: string): boolean {

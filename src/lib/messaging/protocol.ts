@@ -26,6 +26,12 @@ export type ErrorCode =
   | 'ABORTED'
   /** chrome://, 웹스토어 등 content script 주입이 금지된 페이지. */
   | 'TAB_RESTRICTED'
+  /**
+   * 해당 사이트의 호스트 권한이 아직 없음.
+   * activeTab은 사이드패널 사용 패턴에서 신뢰할 수 없어 optional_host_permissions로
+   * 그때그때 요청한다. src/lib/permissions.ts 참조.
+   */
+  | 'HOST_PERMISSION_REQUIRED'
   /** 승인 카드에서 사용자가 거부. */
   | 'ACTION_DENIED'
   | 'UNKNOWN';

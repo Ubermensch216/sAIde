@@ -21,15 +21,30 @@ import {
   type ThinkMode,
 } from '@/lib/storage/settings';
 import { SaideIcon } from '../sidepanel/components/BrandMark';
+import {
+  grantedOrigins,
+  hasAllUrls,
+  requestAllUrls,
+  revokeAllSites,
+  revokeOrigin,
+} from '@/lib/permissions';
 
 export default function OptionsApp() {
   const [s, setS] = useState<Settings>(DEFAULT_SETTINGS);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [conn, setConn] = useState<{ ok: boolean; text: string } | null>(null);
+  const [origins, setOrigins] = useState<string[]>([]);
+  const [allSites, setAllSites] = useState(false);
 
   useEffect(() => {
     loadSettings().then(setS);
+    void reloadPermissions();
   }, []);
+
+  const reloadPermissions = async () => {
+    setOrigins(await grantedOrigins());
+    setAllSites(await hasAllUrls());
+  };
 
   useEffect(() => {
     const root = document.documentElement;
@@ -255,6 +270,67 @@ export default function OptionsApp() {
           </div>
           <p className="desc">낮을수록 일관되고, 높을수록 다양한 답을 냅니다.</p>
         </div>
+      </section>
+
+      {/* ── 페이지 접근 권한 ── */}
+      <section>
+        <h2>페이지 접근</h2>
+
+        <div className="field">
+          <p className="desc">
+            sAIde는 설치할 때 어떤 사이트 권한도 갖지 않습니다. "이 페이지 요약" 같은 기능을 처음
+            쓸 때 그 사이트에 한해 권한을 요청합니다. 아래에서 한 번에 허용하거나 언제든 회수할 수
+            있습니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="allsites">모든 사이트에서 허용</label>
+            <input
+              id="allsites"
+              type="checkbox"
+              checked={allSites}
+              onChange={async (e) => {
+                if (e.target.checked) await requestAllUrls();
+                else await revokeAllSites();
+                await reloadPermissions();
+              }}
+            />
+          </div>
+          <p className="desc">
+            켜면 사이트마다 묻지 않습니다. 페이지 내용은 여전히 이 컴퓨터 밖으로 나가지 않습니다.
+          </p>
+        </div>
+
+        {!allSites && (
+          <div className="field">
+            <div className="row">
+              <label>허용된 사이트</label>
+              <span className="status">{origins.length}곳</span>
+            </div>
+            {origins.length === 0 ? (
+              <p className="desc">아직 없습니다.</p>
+            ) : (
+              <ul className="origin-list">
+                {origins.map((o) => (
+                  <li key={o}>
+                    <code>{o}</code>
+                    <button
+                      className="btn-sm"
+                      onClick={async () => {
+                        await revokeOrigin(o);
+                        await reloadPermissions();
+                      }}
+                    >
+                      회수
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </section>
 
       {/* ── 표시 ── */}
