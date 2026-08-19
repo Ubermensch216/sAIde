@@ -1,0 +1,110 @@
+/**
+ * 디자인 토큰 — 단일 정의처. 계획서 §5 Phase 1-5 / §8
+ *
+ * 원본은 plan/saidebrandsheet.html (브랜드 SSOT). 여기서만 색을 정의하고,
+ * 컴포넌트는 예외 없이 역할 토큰(--bg, --fg, --accent …)만 참조한다.
+ *
+ * 검증된 대비 (WCAG, 2026-08-19):
+ *   Violet  #5B4BD6 on Paper  5.87:1  AA   ← 밝은 배경 본문 가능
+ *   Amber   #F5A524 on Paper  1.95:1  FAIL ← ★ 밝은 배경 텍스트 금지
+ *   Amber   #F5A524 on Ink    9.08:1  AAA
+ *   VioletL #7C6BF0 on Ink    4.61:1  AA   ← 다크모드 accent 확정
+ *   Slate   #6B6880 on Paper  5.13:1  AA
+ */
+
+:root {
+  /* ── 브랜드 원색. 이 6개가 원본이다. ── */
+  --violet: #5b4bd6;
+  --violet-light: #7c6bf0;
+  --amber: #f5a524;
+  --ink: #14121c;
+  --paper: #fafaf8;
+  --slate: #6b6880;
+  --line: #e7e5ee;
+
+  /* ── 역할 토큰 — 라이트 기본 ── */
+  --bg: var(--paper);
+  --surface: #ffffff;
+  --surface-2: #f4f2f7;
+  --fg: var(--ink);
+  --fg-muted: var(--slate);
+  --border: var(--line);
+  --border-strong: #d5d2e0;
+
+  --accent: var(--violet);
+  --accent-fg: #ffffff;
+  --accent-soft: #efedfd;
+
+  /* ── 상태색 ── */
+  --ok: #14724a;
+  --ok-soft: #e6f3ec;
+  --warn: #8a5a0b; /* 앰버를 밝은 배경 텍스트로 못 쓰므로 어둡게 변형 */
+  --warn-soft: #fbf1df;
+  --danger: #c2352f;
+  --danger-soft: #fbebea;
+
+  /**
+   * ★ 앰버 전용 토큰. 용처는 세 가지뿐이다:
+   *   ① 사이드패널 기둥 그래픽  ② 다크 배경 위 AI 글자  ③ 생성 중 인디케이터
+   * 이 토큰을 텍스트 color로 쓰면 브랜드 규칙 위반이다.
+   */
+  --rail: var(--amber);
+
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px rgb(20 18 28 / 5%), 0 8px 24px -16px rgb(20 18 28 / 18%);
+
+  --font-sans: 'Pretendard', 'Inter', 'Noto Sans KR', system-ui, -apple-system,
+    'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, sfmono-regular, menlo, monospace;
+}
+
+/* 시스템 다크 — 명시적 라이트 선택이 OS를 이기도록 :not() 가드 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: var(--ink);
+    --surface: #1c1926;
+    --surface-2: #232030;
+    --fg: var(--paper);
+    --fg-muted: #9a97ad;
+    --border: #2a2735;
+    --border-strong: #3a3648;
+
+    --accent: var(--violet-light); /* 4.61:1 AA */
+    --accent-fg: #14121c;
+    --accent-soft: #241f3d;
+
+    --ok: #4fbf87;
+    --ok-soft: #152b22;
+    --warn: var(--amber); /* 다크에서는 앰버를 텍스트로 써도 된다 (9.08:1) */
+    --warn-soft: #2c2314;
+    --danger: #f0736d;
+    --danger-soft: #2e1b1c;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px -16px rgb(0 0 0 / 70%);
+  }
+}
+
+/* 명시적 다크 선택 — 토글이 OS 라이트를 이기도록 */
+:root[data-theme='dark'] {
+  --bg: var(--ink);
+  --surface: #1c1926;
+  --surface-2: #232030;
+  --fg: var(--paper);
+  --fg-muted: #9a97ad;
+  --border: #2a2735;
+  --border-strong: #3a3648;
+
+  --accent: var(--violet-light);
+  --accent-fg: #14121c;
+  --accent-soft: #241f3d;
+
+  --ok: #4fbf87;
+  --ok-soft: #152b22;
+  --warn: var(--amber);
+  --warn-soft: #2c2314;
+  --danger: #f0736d;
+  --danger-soft: #2e1b1c;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px -16px rgb(0 0 0 / 70%);
+}

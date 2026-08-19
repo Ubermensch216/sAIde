@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="sAIde icon, small sizes">
+  <defs>
+    <linearGradient id="saideBgS" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C6BF0"/>
+      <stop offset="1" stop-color="#5B4BD6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#saideBgS)"/>
+  <g fill="#FFFFFF" opacity="0.5">
+    <rect x="8" y="21" width="24" height="6" rx="3"/>
+    <rect x="8" y="37" width="17" height="6" rx="3"/>
+  </g>
+  <rect x="39" y="9" width="17" height="46" rx="8.5" fill="#F5A524"/>
+  <circle cx="47.5" cy="32" r="5" fill="#14121C"/>
+</svg>

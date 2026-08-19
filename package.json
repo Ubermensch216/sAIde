@@ -1,0 +1,36 @@
+{
+  "name": "saide",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "sAIde — 옆에서 돕는 AI. 로컬 LLM 기반 브라우저 조력자.",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "compile": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "dexie": "^4.4.5",
+    "dompurify": "^3.4.13",
+    "marked": "^18.0.10",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/chrome": "^0.2.6",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@wxt-dev/module-react": "^1.2.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wxt": "^0.21.4"
+  }
+}
