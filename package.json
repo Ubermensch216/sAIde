@@ -11,7 +11,8 @@
     "compile": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "test:live": "vitest run --include \"src/**/*.itest.ts\""
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

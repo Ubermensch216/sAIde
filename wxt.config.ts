@@ -14,8 +14,6 @@ export default defineConfig({
     name: 'sAIde — 옆에서 돕는 AI',
     short_name: 'sAIde',
     description: '내 컴퓨터에서만 도는 AI 브라우저 조력자. 인터넷 없이 작동합니다.',
-    default_locale: 'ko',
-
     icons: {
       16: 'icon/16.png',
       32: 'icon/32.png',

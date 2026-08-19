@@ -1,0 +1,224 @@
+/**
+ * Service Worker — 계획서 §3 설계 결정 ①
+ *
+ * ★ LLM 호출은 여기서 하지 않는다. MV3 서비스 워커는 약 30초 유휴 시
+ *   강제 종료되므로, 21초짜리 콜드 스타트와 수십 초짜리 생성이 중간에 끊긴다.
+ *   LLM 호출 주체는 Side Panel 문서다. 여기서는 이벤트 라우팅과 스크립트
+ *   주입만 담당한다.
+ *
+ * ★ 페이지 접근은 <all_urls> 상시 주입이 아니라 activeTab + executeScript
+ *   온디맨드 방식이다. 사용자가 버튼을 누른 순간에만 주입한다.
+ */
+
+import {
+  isRestrictedUrl,
+  type ContentToSW,
+  type PageAction,
+  type PanelToSW,
+  type SWToPanel,
+  type TabSummary,
+} from '@/lib/messaging/protocol';
+
+const INJECTED_SCRIPT = 'injected.js';
+
+export default defineBackground(() => {
+  // 툴바 아이콘 클릭 → 사이드패널. 이 한 줄이 없으면 아이콘이 아무 반응도 없다.
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((e) => console.error('[sAIde] setPanelBehavior 실패', e));
+
+  chrome.runtime.onInstalled.addListener(() => {
+    registerContextMenus();
+  });
+
+  chrome.runtime.onMessage.addListener((msg: PanelToSW, _sender, sendResponse) => {
+    handlePanelMessage(msg)
+      .then(sendResponse)
+      .catch((e: unknown) =>
+        sendResponse({
+          type: 'ERROR',
+          error: { code: 'UNKNOWN', message: String(e) },
+        } satisfies SWToPanel),
+      );
+    return true; // 비동기 응답을 쓰겠다는 신호
+  });
+
+  // 탭 전환 → 패널이 세션을 갈아끼울 수 있도록 알린다 (계획서 Phase 2-5)
+  chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (tab) pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
+  });
+
+  chrome.tabs.onUpdated.addListener((_tabId, info, tab) => {
+    if (info.status === 'complete' && tab.active) {
+      pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
+    }
+  });
+
+  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+    if (!tab?.id) return;
+    await chrome.sidePanel.open({ tabId: tab.id }).catch(() => undefined);
+    pushToPanel({
+      type: 'CONTEXT_MENU',
+      preset: String(info.menuItemId).replace('saide.', ''),
+      selectionText: info.selectionText ?? '',
+      tab: toSummary(tab),
+    });
+  });
+});
+
+/* ── 컨텍스트 메뉴 (계획서 Phase 3-6) ───────────────────── */
+
+const MENUS: Array<{ id: string; title: string }> = [
+  { id: 'saide.translate', title: '이 문장 번역' },
+  { id: 'saide.explain', title: '쉽게 설명' },
+  { id: 'saide.polish', title: '문장 다듬기' },
+  { id: 'saide.send', title: 'sAIde 사이드패널로 보내기' },
+];
+
+function registerContextMenus() {
+  chrome.contextMenus.removeAll(() => {
+    for (const m of MENUS) {
+      chrome.contextMenus.create({
+        id: m.id,
+        title: m.title,
+        contexts: ['selection'],
+      });
+    }
+  });
+}
+
+/* ── 패널 요청 처리 ────────────────────────────────────── */
+
+async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
+  switch (msg.type) {
+    case 'GET_ACTIVE_TAB': {
+      const tab = await activeTab();
+      return { type: 'ACTIVE_TAB', tab: tab ? toSummary(tab) : null };
+    }
+
+    case 'LIST_TABS': {
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      return { type: 'TABS', tabs: tabs.map(toSummary) };
+    }
+
+    case 'EXTRACT_PAGE': {
+      const res = await withContentScript(msg.tabId, {
+        type: 'EXTRACT',
+        budgetTokens: msg.budgetTokens,
+      });
+      if (res.type === 'EXTRACTED') return { type: 'PAGE_EXTRACTED', payload: res.payload };
+      if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: '추출 실패' } };
+    }
+
+    case 'EXEC_ACTION': {
+      // navigate만 content script가 아니라 여기서 처리한다 (페이지가 사라지므로)
+      if (msg.action.kind === 'navigate') return navigate(msg.tabId, msg.action);
+
+      const res = await withContentScript(msg.tabId, { type: 'ACT', action: msg.action });
+      if (res.type === 'ACTED') return { type: 'ACTION_RESULT', ok: res.ok, detail: res.detail };
+      if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: '액션 실패' } };
+    }
+
+    case 'CAPTURE_SCREENSHOT': {
+      try {
+        const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+        return { type: 'SCREENSHOT', dataUrl };
+      } catch (e) {
+        return {
+          type: 'ERROR',
+          error: {
+            code: 'TAB_RESTRICTED',
+            message: '이 페이지는 캡처할 수 없습니다.',
+            hint: String(e),
+          },
+        };
+      }
+    }
+  }
+}
+
+async function navigate(tabId: number, action: PageAction & { kind: 'navigate' }): Promise<SWToPanel> {
+  // 모델이 만들어낸 URL이다. http/https 외의 스킴은 통과시키지 않는다.
+  let target: URL;
+  try {
+    target = new URL(action.url);
+  } catch {
+    return { type: 'ERROR', error: { code: 'UNKNOWN', message: `잘못된 URL: ${action.url}` } };
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    return {
+      type: 'ERROR',
+      error: {
+        code: 'ACTION_DENIED',
+        message: `허용되지 않는 스킴입니다: ${target.protocol}`,
+        hint: 'http 또는 https만 이동할 수 있습니다.',
+      },
+    };
+  }
+  await chrome.tabs.update(tabId, { url: target.href });
+  return { type: 'ACTION_RESULT', ok: true, detail: `${target.href} 로 이동했습니다.` };
+}
+
+/**
+ * content script를 온디맨드 주입한 뒤 메시지를 보낸다.
+ * 이미 주입돼 있으면 재주입은 무해하다(WXT가 중복 실행을 막는다).
+ */
+async function withContentScript(
+  tabId: number,
+  msg: { type: 'EXTRACT'; budgetTokens: number } | { type: 'ACT'; action: PageAction },
+): Promise<ContentToSW> {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || isRestrictedUrl(tab.url)) {
+    return {
+      type: 'FAILED',
+      error: {
+        code: 'TAB_RESTRICTED',
+        message: '이 페이지에서는 sAIde가 내용을 읽을 수 없습니다.',
+        hint: 'chrome:// 페이지와 웹스토어에서는 확장 스크립트 실행이 금지되어 있습니다.',
+      },
+    };
+  }
+
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: [INJECTED_SCRIPT] });
+  } catch (e) {
+    return {
+      type: 'FAILED',
+      error: {
+        code: 'TAB_RESTRICTED',
+        message: '페이지에 접근할 수 없습니다.',
+        hint: String(e),
+      },
+    };
+  }
+
+  try {
+    return (await chrome.tabs.sendMessage(tabId, msg)) as ContentToSW;
+  } catch (e) {
+    return { type: 'FAILED', error: { code: 'UNKNOWN', message: String(e) } };
+  }
+}
+
+/* ── 유틸 ──────────────────────────────────────────────── */
+
+async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+function toSummary(tab: chrome.tabs.Tab): TabSummary {
+  return {
+    tabId: tab.id ?? -1,
+    url: tab.url ?? '',
+    title: tab.title ?? '',
+    active: tab.active ?? false,
+  };
+}
+
+/** 패널이 닫혀 있으면 수신자가 없어 예외가 난다. 정상 상황이므로 삼킨다. */
+function pushToPanel(msg: SWToPanel) {
+  chrome.runtime.sendMessage(msg).catch(() => undefined);
+}

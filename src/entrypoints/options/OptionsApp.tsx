@@ -1,0 +1,295 @@
+/**
+ * 설정 화면. 계획서 §5 Phase 1-7
+ *
+ * 설계 의도: 성능에 영향을 주는 값(num_ctx, 본문 예산, thinking)은
+ * **비용을 숨기지 않는다.** 슬라이더 옆에 실측 기반 예상 대기시간을
+ * 실시간으로 보여주고, 사용자가 알고 늘리게 한다.
+ */
+
+import { useEffect, useState } from 'react';
+import { checkHealth } from '@/lib/ollama/client';
+import type { ModelInfo } from '@/types/ollama';
+import {
+  DEFAULT_SETTINGS,
+  estimateTtfbSeconds,
+  loadSettings,
+  resetSettings,
+  saveSettings,
+  MEASURED_PREFILL_TOK_PER_SEC,
+  type Settings,
+  type ThemePref,
+  type ThinkMode,
+} from '@/lib/storage/settings';
+import { SaideIcon } from '../sidepanel/components/BrandMark';
+
+export default function OptionsApp() {
+  const [s, setS] = useState<Settings>(DEFAULT_SETTINGS);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [conn, setConn] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    loadSettings().then(setS);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (s.theme === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', s.theme);
+  }, [s.theme]);
+
+  /** 모델 목록을 /api/tags에서 동적으로 불러온다. 하드코딩하지 않는다. */
+  const probe = async (settings: Settings) => {
+    setConn(null);
+    const h = await checkHealth(settings.endpoint, settings.model);
+    setModels(h.models);
+    setConn(
+      h.state === 'down' || h.state === 'cors-blocked'
+        ? { ok: false, text: h.error?.message ?? '연결 실패' }
+        : {
+            ok: true,
+            text: `Ollama ${h.version} · 모델 ${h.models.length}개${
+              h.resident ? ` · 상주 중 (${h.onGpu ? 'GPU' : 'CPU'})` : ''
+            }`,
+          },
+    );
+  };
+
+  useEffect(() => {
+    void probe(s);
+    // 최초 1회만. 이후는 사용자가 '연결 확인'을 누른다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const patch = async (p: Partial<Settings>) => setS(await saveSettings(p));
+
+  const budgetTtfb = estimateTtfbSeconds(s.pageTokenBudget + 300);
+  const ctxFullTtfb = estimateTtfbSeconds(s.numCtx);
+
+  return (
+    <div className="wrap">
+      <header className="opt-header">
+        <SaideIcon size={28} />
+        <span className="wordmark">
+          s<b>AI</b>de
+        </span>
+        <span className="sub">설정</span>
+      </header>
+
+      {/* ── 연결 ── */}
+      <section>
+        <h2>연결</h2>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="endpoint">Ollama 엔드포인트</label>
+            <input
+              id="endpoint"
+              type="text"
+              value={s.endpoint}
+              onChange={(e) => patch({ endpoint: e.target.value })}
+            />
+          </div>
+          <p className="desc">이 컴퓨터의 Ollama 주소입니다. 외부로는 어떤 요청도 나가지 않습니다.</p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="model">모델</label>
+            <select id="model" value={s.model} onChange={(e) => patch({ model: e.target.value })}>
+              {models.length === 0 && <option value={s.model}>{s.model}</option>}
+              {models
+                .filter((m) => !m.capabilities?.includes('embedding'))
+                .map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="row">
+            <button className="btn" onClick={() => void probe(s)}>
+              연결 확인
+            </button>
+            {conn && <span className={`status ${conn.ok ? 'ok' : 'bad'}`}>{conn.text}</span>}
+          </div>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="embed">임베딩 모델</label>
+            <select
+              id="embed"
+              value={s.embedModel}
+              onChange={(e) => patch({ embedModel: e.target.value })}
+            >
+              {models.length === 0 && <option value={s.embedModel}>{s.embedModel}</option>}
+              {models
+                .filter((m) => m.capabilities?.includes('embedding'))
+                .map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <p className="desc">기억·검색 기능에서만 사용합니다. bge-m3는 한국어 검색 품질이 좋습니다.</p>
+        </div>
+      </section>
+
+      {/* ── 성능 ── */}
+      <section>
+        <h2>성능</h2>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="think">추론 과정(thinking)</label>
+            <select
+              id="think"
+              value={s.thinkMode}
+              onChange={(e) => patch({ thinkMode: e.target.value as ThinkMode })}
+            >
+              <option value="off">끄기 — 가장 빠름</option>
+              <option value="agent-only">에이전트에서만 (권장)</option>
+              <option value="always">항상 켜기</option>
+            </select>
+          </div>
+          <p className="desc">
+            모델이 답하기 전에 생각을 적는 기능입니다. 정확도가 조금 오르지만 이 컴퓨터에서는
+            응답이 <strong>약 6배 느려집니다</strong>. 툴을 쓰는 작업에서만 켜는 편이 좋습니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="budget">페이지 본문 분량</label>
+            <input
+              id="budget"
+              type="range"
+              min={500}
+              max={8000}
+              step={250}
+              value={s.pageTokenBudget}
+              onChange={(e) => patch({ pageTokenBudget: Number(e.target.value) })}
+            />
+            <span className="val">{s.pageTokenBudget.toLocaleString()} 토큰</span>
+          </div>
+          {/* 비용을 숨기지 않는다 — 계획서 §5 Phase 3-2 */}
+          <p className={budgetTtfb > 30 ? 'warn' : 'desc'}>
+            한국어 약 {Math.round((s.pageTokenBudget * 2) / 100) * 100}자 · 답변 시작까지 약{' '}
+            <strong>{budgetTtfb}초</strong>
+            {budgetTtfb > 30 && ' — 실사용에는 너무 깁니다'}
+          </p>
+          <p className="desc">이 분량을 넘는 페이지는 앞부분만 읽고, 그 사실을 화면에 알립니다.</p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="ctx">컨텍스트 길이 (num_ctx)</label>
+            <select
+              id="ctx"
+              value={s.numCtx}
+              onChange={(e) => patch({ numCtx: Number(e.target.value) })}
+            >
+              {[2048, 4096, 8192, 16384, 32768].map((n) => (
+                <option key={n} value={n}>
+                  {n.toLocaleString()}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="desc">
+            대화 전체가 들어갈 수 있는 최대 크기입니다. 꽉 채우면 답변 시작까지 약{' '}
+            {ctxFullTtfb}초 걸립니다. 값을 바꾸면 모델이 다시 로드되므로 잠시 느려집니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="keep">모델 유지 시간</label>
+            <select
+              id="keep"
+              value={s.keepAlive}
+              onChange={(e) => patch({ keepAlive: e.target.value })}
+            >
+              <option value="5m">5분</option>
+              <option value="10m">10분 (권장)</option>
+              <option value="30m">30분</option>
+              <option value="-1">계속 유지</option>
+            </select>
+          </div>
+          <p className="desc">
+            길게 잡으면 응답이 빠르지만 메모리를 계속 차지합니다(약 7GB). 16GB 컴퓨터에서는
+            10분이 적당합니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="warm">패널을 열 때 미리 준비</label>
+            <input
+              id="warm"
+              type="checkbox"
+              checked={s.warmupOnOpen}
+              onChange={(e) => patch({ warmupOnOpen: e.target.checked })}
+            />
+          </div>
+          <p className="desc">
+            모델을 미리 메모리에 올려 첫 응답을 앞당깁니다. 끄면 첫 질문에서 약 20초를 기다리게
+            됩니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="temp">temperature</label>
+            <input
+              id="temp"
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.1}
+              value={s.temperature}
+              onChange={(e) => patch({ temperature: Number(e.target.value) })}
+            />
+            <span className="val">{s.temperature.toFixed(1)}</span>
+          </div>
+          <p className="desc">낮을수록 일관되고, 높을수록 다양한 답을 냅니다.</p>
+        </div>
+      </section>
+
+      {/* ── 표시 ── */}
+      <section>
+        <h2>표시</h2>
+        <div className="field">
+          <div className="row">
+            <label htmlFor="theme">테마</label>
+            <select
+              id="theme"
+              value={s.theme}
+              onChange={(e) => patch({ theme: e.target.value as ThemePref })}
+            >
+              <option value="system">시스템 설정 따르기</option>
+              <option value="light">밝게</option>
+              <option value="dark">어둡게</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <button
+          className="btn"
+          onClick={async () => {
+            setS(await resetSettings());
+          }}
+        >
+          기본값으로 되돌리기
+        </button>
+        <p className="desc" style={{ marginTop: 8 }}>
+          기본값은 이 컴퓨터에서 실제로 측정한 성능(프리필 {MEASURED_PREFILL_TOK_PER_SEC} tok/s)에
+          맞춰 정해져 있습니다.
+        </p>
+      </section>
+    </div>
+  );
+}
