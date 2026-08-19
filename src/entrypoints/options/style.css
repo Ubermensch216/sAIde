@@ -297,3 +297,83 @@ section > h2 {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── 성능 기록 (Phase 7-1) ─────────────────────────────── */
+
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 12px 0;
+}
+
+.perf-table th,
+.perf-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.perf-table th {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  text-transform: none;
+}
+
+.perf-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 달성/미달을 색으로만 구분하지 않는다 — 글자로도 적는다.
+ * 색각 이상 사용자에게 색은 정보가 되지 못한다.
+ */
+.perf-table .miss {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.perf-table .meet {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.perf-grid > div {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--surface-2);
+}
+
+.perf-grid dt {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.perf-grid dd {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.perf-grid .base {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.desc.ok-note {
+  color: var(--ok);
+  font-weight: 600;
+}

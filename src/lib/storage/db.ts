@@ -180,6 +180,18 @@ export async function deleteMessagesFrom(
     .delete();
 }
 
+/**
+ * 성능 계측 표본을 모은다. 계획서 Phase 7-1
+ *
+ * 별도 테이블을 두지 않는 이유: 계측치는 이미 메시지마다 `perf`로 저장되고
+ * 있고, 대화를 지우면 그 계측도 함께 사라지는 편이 사용자 기대에 맞는다.
+ * (설정의 "모든 대화 삭제"가 곧 계측 초기화다.)
+ */
+export async function listPerfSamples(limit = 500): Promise<PerfSample[]> {
+  const rows = await db.messages.orderBy('createdAt').reverse().limit(limit).toArray();
+  return rows.map((m) => m.perf).filter((p): p is PerfSample => Boolean(p));
+}
+
 /** 첫 사용자 메시지로 대화 제목을 만든다. 별도 LLM 호출은 낭비다(21 tok/s). */
 export function titleFrom(text: string): string {
   const clean = text.replace(/\s+/g, ' ').trim();

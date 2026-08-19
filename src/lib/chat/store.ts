@@ -35,7 +35,14 @@ import type { Settings } from '@/lib/storage/settings';
 import { AGENT_TOOLS } from '@/lib/agent/tools';
 import { createExecutor, createTargetDescriber } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
-import { AGENT_GUIDE } from '@/lib/prompts/agent';
+import { buildAgentGuide } from '@/lib/prompts/agent';
+
+/** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
+export interface AgentTab {
+  tabId: number;
+  url: string;
+  title: string;
+}
 
 /** 화면에 그리는 메시지. 저장 레코드에 스트리밍 중 상태가 얹힌다. */
 export interface UiMessage extends Omit<StoredMessage, 'id'> {
@@ -73,7 +80,12 @@ interface ChatState {
   /** 이번 요청에서 실제로 프리필해야 할 예상 초 — 캐시 적중분은 뺀 값 */
   expectedPrefillSec: number;
 
-  error: string | null;
+  /**
+   * 화면에 띄울 오류. ★ 문자열이 아니라 코드가 붙은 AppError다.
+   * 코드가 있어야 UI가 해결 방법(명령·권한 요청 버튼)을 붙일 수 있다 —
+   * 계획서 Phase 7-2. 문구는 lib/errors/describe.ts 한곳에서 만든다.
+   */
+  error: AppError | null;
   abort: AbortController | null;
   /** 직전 요청의 컨텍스트. 접두사 캐시 적중분을 계산하는 데 쓴다. */
   lastContext: ChatMessage[] | null;
@@ -99,12 +111,12 @@ interface ChatState {
   detachScreenshot: () => void;
   send: (text: string, settings: Settings) => Promise<void>;
   /** 에이전트 모드 전송 (Phase 5). 툴을 붙여 최대 8턴까지 돈다. */
-  sendAgent: (text: string, settings: Settings, tabId: number) => Promise<void>;
+  sendAgent: (text: string, settings: Settings, tab: AgentTab) => Promise<void>;
   /** 승인 카드의 응답. false면 실행하지 않는다. */
   resolveApproval: (approved: boolean) => void;
   regenerate: (settings: Settings) => Promise<void>;
   stop: () => void;
-  setError: (e: string | null) => void;
+  setError: (e: AppError | string | null) => void;
   clearError: () => void;
 }
 
@@ -174,7 +186,7 @@ export const useChat = create<ChatState>((set, get) => ({
       });
 
       if (res.type === 'ERROR') {
-        set({ error: describeError(res.error) });
+        set({ error: res.error });
         return null;
       }
       if (res.type !== 'PAGE_EXTRACTED') return null;
@@ -203,7 +215,7 @@ export const useChat = create<ChatState>((set, get) => ({
     try {
       const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId });
       if (res.type === 'ERROR') {
-        set({ error: describeError(res.error) });
+        set({ error: res.error });
         return null;
       }
       if (res.type !== 'SCREENSHOT') return null;
@@ -246,7 +258,7 @@ export const useChat = create<ChatState>((set, get) => ({
    * ★ 호출 전에 호스트 권한이 확보돼 있어야 한다. 루프 도중에는 사용자
    *   제스처가 없어 chrome.permissions.request가 거부된다(executor.ts 참조).
    */
-  async sendAgent(text, settings, tabId) {
+  async sendAgent(text, settings, tab) {
     const trimmed = text.trim();
     if (!trimmed || get().streaming) return;
 
@@ -262,7 +274,7 @@ export const useChat = create<ChatState>((set, get) => ({
     const userId = await addMessage(userMsg);
 
     set((s) => ({ messages: [...s.messages, { ...userMsg, id: userId }] }));
-    await runAgent(set, get, settings, tabId);
+    await runAgent(set, get, settings, tab);
   },
 
   resolveApproval(approved) {
@@ -304,7 +316,9 @@ export const useChat = create<ChatState>((set, get) => ({
     set({ abort: null, streaming: false, startedAt: null, agentTurn: 0 });
   },
 
-  setError: (e) => set({ error: e }),
+  // 문자열로 넘어온 것은 분류되지 않은 오류다. 코드만 씌워 형태를 맞춘다.
+  setError: (e) =>
+    set({ error: typeof e === 'string' ? { code: 'UNKNOWN', message: e } : e }),
   clearError: () => set({ error: null }),
 }));
 
@@ -549,7 +563,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       startedAt: null,
       abort: null,
       lastContext: null,
-      error: aborted ? null : (err?.message ?? String(e)),
+      error: aborted ? null : toAppError(err, e),
     }));
   }
 }
@@ -563,7 +577,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
  *   들어가므로, 툴이 필요 없는 대화에까지 붙이면 모든 질문이 느려진다.
  *   그래서 에이전트는 사용자가 명시적으로 켰을 때만 이 경로로 온다.
  */
-async function runAgent(set: Set, get: Get, settings: Settings, tabId: number) {
+async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   const conv = get().conversation;
   if (!conv) return;
 
@@ -578,7 +592,9 @@ async function runAgent(set: Set, get: Get, settings: Settings, tabId: number) {
     settings.numCtx,
     toAttachment(page, screenshot),
     undefined,
-    AGENT_GUIDE,
+    // ★ 현재 탭을 알려주지 않으면 에이전트가 "어떤 페이지요?"라고 되묻고 끝난다.
+    //   실측 근거는 prompts/agent.ts currentTabNote 주석 참조.
+    buildAgentGuide(tab),
   );
 
   const placeholder: UiMessage = {
@@ -623,8 +639,8 @@ async function runAgent(set: Set, get: Get, settings: Settings, tabId: number) {
     }, 60);
   };
 
-  const execute = createExecutor(() => tabId);
-  const describeTarget = createTargetDescriber(() => tabId);
+  const execute = createExecutor(() => tab.tabId);
+  const describeTarget = createTargetDescriber(() => tab.tabId);
 
   try {
     const outcome = await runAgentLoop(
@@ -676,10 +692,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tabId: number) {
         approve: (request) =>
           new Promise<boolean>((resolve) => set({ pendingApproval: { request, resolve } })),
 
-        currentPage: () => ({
-          url: get().currentUrl || page?.url || '',
-          title: page?.title ?? '',
-        }),
+        currentPage: () => ({ url: tab.url, title: tab.title }),
 
         onEvent: (e) => {
           if (e.type === 'turn-start') set({ agentTurn: e.turn });
@@ -752,13 +765,15 @@ async function runAgent(set: Set, get: Get, settings: Settings, tabId: number) {
       agentTurn: 0,
       pendingApproval: null,
       lastContext: null,
-      error: aborted ? null : (err?.message ?? String(e)),
+      error: aborted ? null : toAppError(err, e),
     }));
   }
 }
 
-function describeError(e: AppError): string {
-  return e.hint ? `${e.message} ${e.hint}` : e.message;
+/** 예외를 AppError로 정규화한다. OllamaError면 분류된 코드를 살린다. */
+function toAppError(err: OllamaError | null, raw: unknown): AppError {
+  if (err) return err.toAppError();
+  return { code: 'UNKNOWN', message: String(raw) };
 }
 
 function findLastIndex<T>(arr: T[], pred: (v: T) => boolean): number {

@@ -23,7 +23,7 @@ import {
 } from '@/lib/prompts/presets';
 import { loadCustomPresets, onCustomPresetsChanged } from '@/lib/storage/presets';
 import { detectPageKind, kindHint, suggestedOrder } from '@/lib/extract/pagetype';
-import { requestCaptureAccess, requestHostAccess } from '@/lib/permissions';
+import { requestAllUrls, requestCaptureAccess, requestHostAccess } from '@/lib/permissions';
 import { estimateTtfbSeconds } from '@/lib/storage/settings';
 import {
   loadSettings,
@@ -35,6 +35,7 @@ import {
 import { canRunAgent as agentAllowed } from '@/lib/agent/executor';
 import { SaideIcon, Wordmark } from './components/BrandMark';
 import { ApprovalCard } from './components/ApprovalCard';
+import { ErrorBanner } from './components/ErrorBanner';
 import { HealthBanner } from './components/HealthBanner';
 import { MessageList } from './components/MessageList';
 import { Composer } from './components/Composer';
@@ -225,10 +226,11 @@ export default function App() {
   const ensureAccess = async (url: string): Promise<boolean> => {
     const ok = await requestHostAccess(url);
     if (!ok) {
-      chat.setError(
-        '이 사이트의 내용을 읽으려면 접근 권한이 필요합니다. ' +
-          '권한 요청을 허용하거나, 설정에서 모든 사이트를 한 번에 허용할 수 있습니다.',
-      );
+      // 코드를 붙여 넘긴다. 배너가 '권한 허용' 버튼을 달아 주는 근거다(Phase 7-2).
+      chat.setError({
+        code: 'HOST_PERMISSION_REQUIRED',
+        message: '이 사이트의 내용을 읽으려면 접근 권한이 필요합니다.',
+      });
     }
     return ok;
   };
@@ -244,11 +246,13 @@ export default function App() {
   const ensureCapture = async (): Promise<boolean> => {
     const ok = await requestCaptureAccess();
     if (!ok) {
-      chat.setError(
-        '화면 캡처는 모든 사이트에 대한 접근 권한이 필요합니다. ' +
+      chat.setError({
+        code: 'HOST_PERMISSION_REQUIRED',
+        message: '화면 캡처는 모든 사이트에 대한 접근 권한이 필요합니다.',
+        hint:
           '크롬이 캡처 기능에 한해 사이트별 권한을 받아주지 않기 때문입니다. ' +
           '허용하지 않으시려면 대신 "이 페이지 요약"으로 본문을 읽을 수 있습니다.',
-      );
+      });
     }
     return ok;
   };
@@ -289,7 +293,7 @@ export default function App() {
   const startAgent = async (text: string) => {
     if (!tab || chat.streaming) return;
     if (!(await ensureAccess(tab.url))) return;
-    await chat.sendAgent(text, settings, tab.tabId);
+    await chat.sendAgent(text, settings, tab);
   };
 
   /** 대화 도중 페이지 붙이기 */
@@ -331,6 +335,30 @@ export default function App() {
 
     const text = expandCommand(cmd, rest, customs);
     if (text.trim()) void chat.send(text, settings);
+  };
+
+  /**
+   * 오류 배너의 해결 버튼. 계획서 Phase 7-2
+   *
+   * ★ 권한 요청은 이 핸들러의 첫 동작이어야 한다. 앞에 await가 끼면
+   *   사용자 제스처가 소실돼 크롬이 요청을 거부한다(permissions.ts).
+   */
+  const handleErrorAction = (action: 'retry' | 'grant-host' | 'grant-all' | 'open-settings') => {
+    switch (action) {
+      case 'grant-host':
+        if (tab) void requestHostAccess(tab.url).then((ok) => ok && chat.clearError());
+        break;
+      case 'grant-all':
+        void requestAllUrls().then((ok) => ok && chat.clearError());
+        break;
+      case 'open-settings':
+        chrome.runtime.openOptionsPage();
+        break;
+      case 'retry':
+        chat.clearError();
+        void refresh();
+        break;
+    }
   };
 
   const pickConversation = async (c: Conversation) => {
@@ -393,15 +421,12 @@ export default function App() {
       {warming && <WarmupProgress seconds={MEASURED_COLD_LOAD_SEC} />}
 
       {chat.error && (
-        <div className="banner banner-down" role="alert">
-          <div className="body">
-            <div className="title">문제가 발생했습니다</div>
-            <div className="hint">{chat.error}</div>
-          </div>
-          <button className="btn-sm" onClick={chat.clearError}>
-            닫기
-          </button>
-        </div>
+        <ErrorBanner
+          error={chat.error}
+          model={settings.model}
+          onClose={chat.clearError}
+          onAction={handleErrorAction}
+        />
       )}
 
       <main className="app-main">

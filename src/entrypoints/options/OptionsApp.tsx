@@ -22,6 +22,7 @@ import {
 } from '@/lib/storage/settings';
 import { SaideIcon } from '../sidepanel/components/BrandMark';
 import { PresetEditor } from './PresetEditor';
+import { PerfDashboard } from './PerfDashboard';
 import {
   grantedOrigins,
   hasAllUrls,
@@ -344,6 +345,8 @@ export default function OptionsApp() {
           </p>
         </div>
       </section>
+
+      <PerfDashboard />
 
       <PresetEditor />
 

@@ -290,3 +290,14 @@ select {
   padding-top: 12px;
   margin-top: 4px;
 }
+
+/*
+ * 배너의 버튼 묶음 (Phase 7-2).
+ * 해결 버튼과 닫기 버튼이 함께 서므로 세로로 쌓아 좁은 폭에서도 눌리게 한다.
+ */
+.banner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}
