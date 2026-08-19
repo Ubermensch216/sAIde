@@ -42,13 +42,28 @@
   --warn-soft: #fbf1df;
   --danger: #c2352f;
   --danger-soft: #fbebea;
+  --danger-fg: #ffffff;
+
+  /* 오버레이 — 양쪽 테마 모두 잉크 계열로 깐다 */
+  --scrim: rgb(20 18 28 / 38%);
 
   /**
    * ★ 앰버 전용 토큰. 용처는 세 가지뿐이다:
    *   ① 사이드패널 기둥 그래픽  ② 다크 배경 위 AI 글자  ③ 생성 중 인디케이터
-   * 이 토큰을 텍스트 color로 쓰면 브랜드 규칙 위반이다.
+   * 이 토큰을 밝은 배경의 텍스트 color로 쓰면 브랜드 규칙 위반이다(1.95:1).
    */
   --rail: var(--amber);
+
+  /**
+   * 워드마크의 AI 두 글자.
+   *
+   * ★ --accent와 같지 않다. 브랜드 시트가 배경별로 다른 색을 지정하기 때문이다:
+   *   밝은 배경 → 바이올렛 (saide-wordmark.svg)
+   *   어두운 배경 → 앰버   (saide-wordmark-dark.svg)
+   * 다크에서 --accent(#7C6BF0)를 그대로 쓰면 헤더 표면(#1C1926) 대비가
+   * 4.29:1로 AA에 못 미친다. 앰버는 같은 표면에서 8.46:1이다.
+   */
+  --wordmark-ai: var(--violet);
 
   --radius: 10px;
   --radius-lg: 14px;
@@ -80,6 +95,12 @@
     --warn-soft: #2c2314;
     --danger: #f0736d;
     --danger-soft: #2e1b1c;
+    /* 밝아진 danger 위에 흰 글자는 2.85:1로 읽히지 않는다. 잉크가 6.51:1. */
+    --danger-fg: #14121c;
+    --scrim: rgb(0 0 0 / 55%);
+
+    /* 브랜드 시트: 어두운 배경의 AI는 앰버 (saide-wordmark-dark.svg) */
+    --wordmark-ai: var(--amber);
 
     --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px -16px rgb(0 0 0 / 70%);
   }
@@ -105,6 +126,11 @@
   --warn-soft: #2c2314;
   --danger: #f0736d;
   --danger-soft: #2e1b1c;
+  --danger-fg: #14121c;
+  --scrim: rgb(0 0 0 / 55%);
+
+  /* 브랜드 시트: 어두운 배경의 AI는 앰버 (saide-wordmark-dark.svg) */
+  --wordmark-ai: var(--amber);
 
   --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px -16px rgb(0 0 0 / 70%);
 }

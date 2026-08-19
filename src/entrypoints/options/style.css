@@ -56,9 +56,10 @@ button {
   letter-spacing: -0.03em;
 }
 
+/* 밝은 배경은 바이올렛, 어두운 배경은 앰버 — 브랜드 시트 규정 */
 .opt-header .wordmark b {
   font-weight: 800;
-  color: var(--accent);
+  color: var(--wordmark-ai);
 }
 
 .opt-header .sub {

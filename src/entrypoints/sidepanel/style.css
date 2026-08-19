@@ -1,4 +1,5 @@
 @import '@/lib/brand/tokens.css';
+@import './chat.css';
 
 *,
 *::before,
@@ -87,10 +88,14 @@ select {
   white-space: nowrap;
 }
 
-/* 워드마크 규칙: AI 두 글자만 색·굵기로 강조. 강조점은 언제나 하나. */
+/*
+ * 워드마크 규칙: AI 두 글자만 색·굵기로 강조. 강조점은 언제나 하나.
+ * ★ --accent가 아니라 --wordmark-ai다. 브랜드 시트가 배경별로 다른 색을
+ *   지정한다 — 밝은 배경은 바이올렛, 어두운 배경은 앰버.
+ */
 .app-header .wordmark b {
   font-weight: 800;
-  color: var(--accent);
+  color: var(--wordmark-ai);
 }
 
 .app-header .spacer {

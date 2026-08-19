@@ -1,0 +1,122 @@
+/**
+ * 메시지 목록. 계획서 Phase 2-2 / 2-8
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import type { UiMessage } from '@/lib/chat/store';
+import type { PerfSample } from '@/types/ollama';
+import { Markdown } from './Markdown';
+
+interface Props {
+  messages: UiMessage[];
+  dark: boolean;
+  showThinking: boolean;
+}
+
+export function MessageList({ messages, dark, showThinking }: Props) {
+  const endRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+
+  // 사용자가 위로 스크롤해 과거를 읽는 중이면 자동 스크롤로 끌어내리지 않는다.
+  const onScroll = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
+
+  useEffect(() => {
+    if (pinned.current) endRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages]);
+
+  return (
+    <div className="msgs" ref={scrollerRef} onScroll={onScroll}>
+      {messages.map((m) => (
+        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} />
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+function Message({
+  msg,
+  dark,
+  showThinking,
+}: {
+  msg: UiMessage;
+  dark: boolean;
+  showThinking: boolean;
+}) {
+  if (msg.role === 'user') {
+    return (
+      <div className="msg msg-user">
+        <div className="bubble">{msg.content}</div>
+      </div>
+    );
+  }
+
+  const empty = !msg.content && !msg.thinking;
+
+  return (
+    <div className="msg msg-assistant">
+      {msg.notice && <div className="notice">{msg.notice}</div>}
+
+      {showThinking && msg.thinking && (
+        <ThinkingBlock text={msg.thinking} live={Boolean(msg.streaming)} />
+      )}
+
+      {empty && msg.streaming ? (
+        <Typing />
+      ) : (
+        <Markdown text={msg.content} streaming={msg.streaming} dark={dark} />
+      )}
+
+      {msg.aborted && <div className="aborted">여기서 중단했습니다.</div>}
+      {msg.perf && !msg.streaming && <PerfLine perf={msg.perf} />}
+    </div>
+  );
+}
+
+/**
+ * 추론 과정 — 기본으로 접어 둔다. 계획서 Phase 2-8
+ * 펼침이 기본이면 답변보다 사고 과정이 먼저 눈에 들어와 방해가 된다.
+ */
+function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className={`thinking ${open ? 'open' : ''}`}>
+      <button className="thinking-head" onClick={() => setOpen((o) => !o)}>
+        <span className={`caret ${open ? 'open' : ''}`}>›</span>
+        <span>{live ? '생각하는 중…' : '생각 과정'}</span>
+        <span className="thinking-len">{text.length}자</span>
+      </button>
+      {open && <div className="thinking-body">{text}</div>}
+    </div>
+  );
+}
+
+function Typing() {
+  return (
+    <div className="typing" aria-label="응답 생성 중">
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
+
+/**
+ * 성능 한 줄. 계획서 §6 목표와 대조할 수 있게 실제 수치를 노출한다.
+ * CPU 추론에서는 사용자가 "왜 느린지"를 알 수 있어야 납득한다.
+ */
+function PerfLine({ perf }: { perf: PerfSample }) {
+  return (
+    <div className="perf">
+      {(perf.ttfbMs / 1000).toFixed(1)}초 · {perf.decodeTokPerSec} tok/s ·{' '}
+      {perf.promptTokens.toLocaleString()}→{perf.outputTokens.toLocaleString()} 토큰
+      {perf.wasCold && ' · 콜드 스타트'}
+    </div>
+  );
+}
