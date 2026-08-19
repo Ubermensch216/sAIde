@@ -68,6 +68,28 @@ export async function requestAllUrls(): Promise<boolean> {
   }
 }
 
+/**
+ * 화면 캡처 권한을 확보한다.
+ *
+ * ★ `chrome.tabs.captureVisibleTab`은 **사이트별 권한을 받아주지 않는다.**
+ *   `https://example.com/*`를 허용해 둬도 다음으로 거부한다:
+ *
+ *     Either the '<all_urls>' or 'activeTab' permission is required.
+ *
+ *   activeTab은 상주 사이드패널에서 신뢰할 수 없으므로(§0.7), 캡처만은
+ *   `<all_urls>`가 필요하다. 본문 읽기(executeScript)는 사이트별 권한으로
+ *   충분하므로 그쪽은 그대로 두고, **캡처에서만 권한을 올린다.**
+ *
+ *   호출 규칙은 requestHostAccess와 같다 — 클릭 핸들러의 첫 동작이어야 한다.
+ */
+export async function requestCaptureAccess(): Promise<boolean> {
+  try {
+    return await chrome.permissions.request({ origins: [ALL_URLS] });
+  } catch {
+    return false;
+  }
+}
+
 export async function hasAllUrls(): Promise<boolean> {
   try {
     return await chrome.permissions.contains({ origins: [ALL_URLS] });

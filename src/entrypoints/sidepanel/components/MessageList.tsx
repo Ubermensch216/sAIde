@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { UiMessage } from '@/lib/chat/store';
 import type { PerfSample } from '@/types/ollama';
+import { AgentSteps } from './AgentSteps';
 import { Markdown } from './Markdown';
 
 interface Props {
@@ -64,6 +65,11 @@ function Message({
 
       {showThinking && msg.thinking && (
         <ThinkingBlock text={msg.thinking} live={Boolean(msg.streaming)} />
+      )}
+
+      {/* 에이전트 실행 기록 (Phase 5). 답변보다 먼저 — 시간 순서대로 읽힌다. */}
+      {msg.steps && msg.steps.length > 0 && (
+        <AgentSteps steps={msg.steps} live={Boolean(msg.streaming)} />
       )}
 
       {empty && msg.streaming ? (

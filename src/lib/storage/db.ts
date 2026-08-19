@@ -7,6 +7,8 @@
 
 import Dexie, { type EntityTable } from 'dexie';
 import type { PerfSample } from '@/types/ollama';
+import type { AgentStep } from '@/lib/agent/loop';
+import { sameDocument } from '@/lib/messaging/protocol';
 
 export interface Conversation {
   id: number;
@@ -33,6 +35,14 @@ export interface StoredMessage {
   /** 생성이 중단되었는가 */
   aborted?: boolean;
   error?: string;
+  /**
+   * Phase 5. 에이전트가 실제로 무엇을 했는지의 기록.
+   *
+   * ★ 저장하는 이유는 감사(監査)다. 승인해서 클릭·입력이 일어난 대화라면,
+   *   나중에 "무엇을 눌렀는지"를 사용자가 되짚을 수 있어야 한다.
+   *   스키마 버전을 올리지 않아도 되는 비인덱스 필드다.
+   */
+  steps?: AgentStep[];
   createdAt: number;
 }
 
@@ -72,8 +82,14 @@ export async function createConversation(
  *   말 한마디 오가지 않은 빈 대화방이 탭 수만큼 쌓인다. 실제 저장은 첫
  *   메시지를 보내는 순간에만 한다(store.ts의 ensureConversation).
  *
- * 탭이 다른 사이트로 이동하면 이전 대화를 이어붙이는 게 부자연스러우므로
- * 호스트가 달라지면 이어가지 않는다.
+ * ★ 이어가는 조건은 **같은 문서**다. 호스트가 아니다.
+ *
+ *   호스트로 판정하면 뉴스 사이트에서 기사 A를 요약한 뒤 기사 B로 넘어갈 때
+ *   같은 대화가 이어진다. 붙어 있는 페이지 본문은 B로 바뀌는데 대화 이력에는
+ *   A에 대한 요약이 그대로 남아, 모델이 자기가 방금 한 A 얘기에 이끌려
+ *   B를 묻는 질문에도 A 기준으로 답하게 된다.
+ *
+ *   해시(#)만 다른 것은 같은 문서로 본다 — 문서 내 이동일 뿐이다.
  */
 export async function findForTab(
   tabId: number,
@@ -86,7 +102,7 @@ export async function findForTab(
     .sortBy('updatedAt');
 
   const prev = existing[0];
-  return prev && sameHost(prev.originUrl, url) ? prev : null;
+  return prev && sameDocument(prev.originUrl, url) ? prev : null;
 }
 
 /**
@@ -106,14 +122,6 @@ export async function pruneEmptyConversations(): Promise<number> {
   const empty = all.filter((c) => !withMessages.has(c.id)).map((c) => c.id);
   if (empty.length > 0) await db.conversations.bulkDelete(empty);
   return empty.length;
-}
-
-function sameHost(a: string, b: string): boolean {
-  try {
-    return new URL(a).host === new URL(b).host;
-  } catch {
-    return a === b;
-  }
 }
 
 export async function listConversations(limit = 50): Promise<Conversation[]> {

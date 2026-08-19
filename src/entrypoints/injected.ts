@@ -129,6 +129,17 @@ async function performAction(action: PageAction): Promise<{ ok: boolean; detail:
         : { ok: false, detail: `'${action.query}'에 해당하는 요소를 찾지 못했습니다.` };
     }
 
+    /**
+     * 승인 카드에 보여줄 대상 요소를 미리 확인한다. 부작용 없음.
+     * 클릭·입력을 승인받기 **전에** 무엇을 건드리는지 알아야 하므로 필요하다.
+     */
+    case 'describe_target': {
+      const el = resolveTarget(action.selector);
+      return el
+        ? { ok: true, detail: describe(el) }
+        : { ok: false, detail: `선택자에 맞는 요소가 없습니다: ${action.selector}` };
+    }
+
     case 'scroll': {
       const amount = action.amount ?? window.innerHeight * 0.8;
       if (action.direction === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -143,17 +154,23 @@ async function performAction(action: PageAction): Promise<{ ok: boolean; detail:
     }
 
     case 'click': {
-      const el = document.querySelector<HTMLElement>(action.selector);
+      const el = resolveTarget(action.selector);
       if (!el) return { ok: false, detail: `선택자에 맞는 요소가 없습니다: ${action.selector}` };
       el.click();
       return { ok: true, detail: `클릭했습니다: ${describe(el)}` };
     }
 
     case 'type_text': {
-      const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-        action.selector,
-      );
-      if (!el) return { ok: false, detail: `입력 요소가 없습니다: ${action.selector}` };
+      const found = resolveTarget(action.selector);
+      if (!found) return { ok: false, detail: `입력 요소가 없습니다: ${action.selector}` };
+      if (!isTextInput(found)) {
+        // 어디에 썼는지 모르는 상태로 성공을 보고하지 않는다.
+        return {
+          ok: false,
+          detail: `${describe(found)} 는 글자를 넣을 수 있는 요소가 아닙니다.`,
+        };
+      }
+      const el = found;
       el.focus();
       el.value = action.text;
       // React 등 프레임워크가 상태를 갱신하도록 실제 이벤트를 발생시킨다.
@@ -166,6 +183,36 @@ async function performAction(action: PageAction): Promise<{ ok: boolean; detail:
       // background에서 처리한다. 여기 오면 라우팅 버그다.
       return { ok: false, detail: 'navigate는 주입 스크립트에서 처리하지 않습니다.' };
   }
+}
+
+/**
+ * 선택자 문자열을 실제 요소로 해석한다.
+ *
+ * ★ 2.3B 모델은 CSS 선택자를 제대로 못 만든다. `selector` 자리에 "로그인 버튼"
+ *   같은 사람 말이 들어오는 것이 정상 경로에 가깝다. 그래서 ① CSS로 먼저 찾고
+ *   ② 실패하면 화면에 보이는 글자로 찾는다. 툴 스키마의 설명도 그렇게 써 두었다.
+ *
+ * ★ 승인 카드(describe_target)와 실제 실행(click/type_text)이 **반드시 같은
+ *   함수**를 써야 한다. 다르게 찾으면 사용자가 승인한 것과 실행되는 것이
+ *   달라진다 — 승인 게이트가 있으나 마나 해진다.
+ */
+function resolveTarget(selector: string): HTMLElement | null {
+  try {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) return el;
+  } catch {
+    // 선택자로 성립하지 않는 문자열이다. 사람 말로 보고 아래에서 다시 찾는다.
+  }
+  return findByText(selector);
+}
+
+function isTextInput(el: HTMLElement): el is HTMLInputElement | HTMLTextAreaElement {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'textarea') return true;
+  if (tag !== 'input') return false;
+  // 체크박스·라디오·파일 입력에 value를 밀어 넣으면 조용히 이상해진다.
+  const type = (el as HTMLInputElement).type;
+  return !['checkbox', 'radio', 'file', 'submit', 'button', 'image', 'range', 'color'].includes(type);
 }
 
 /** 사람이 쓰는 말로 요소를 찾는다. 소형 모델이 CSS 선택자를 잘 못 만들기 때문. */

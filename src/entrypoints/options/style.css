@@ -229,3 +229,71 @@ section > h2 {
 .btn-sm:hover {
   background: var(--bg);
 }
+
+.field textarea {
+  flex: 1;
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.preset-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preset-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.preset-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.preset-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-head code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.preset-needs {
+  font-size: 11px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.preset-body {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

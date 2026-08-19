@@ -69,6 +69,12 @@ export interface ExtractedPage {
 export type PageAction =
   | { kind: 'read_page' }
   | { kind: 'find_element'; query: string }
+  /**
+   * 승인 카드에 보여줄 대상 요소를 미리 확인한다. 부작용 없음.
+   * click / type_text를 승인받기 **전에** 무엇을 건드리는지 알아야 하기 때문에 있다.
+   * 계획서 §7 — 승인 카드는 대상 요소의 텍스트/aria-label을 표시해야 한다.
+   */
+  | { kind: 'describe_target'; selector: string }
   | { kind: 'scroll'; direction: 'up' | 'down' | 'top' | 'bottom'; amount?: number }
   | { kind: 'click'; selector: string }
   | { kind: 'type_text'; selector: string; text: string }
@@ -142,6 +148,30 @@ export async function sendToContent(
   msg: SWToContent,
 ): Promise<ContentToSW> {
   return chrome.tabs.sendMessage(tabId, msg) as Promise<ContentToSW>;
+}
+
+/* ── URL 비교 ──────────────────────────────────────────── */
+
+/**
+ * 같은 문서인지 판정할 때 쓰는 정규화 형태.
+ *
+ * 해시(#)만 다른 것은 같은 문서로 본다 — 문서 내 이동일 뿐 내용이 바뀌지 않는다.
+ * 반면 경로나 쿼리가 다르면 다른 글이다. 뉴스 사이트에서 기사 A와 B는
+ * 호스트가 같아도 완전히 다른 내용이므로 반드시 구분해야 한다.
+ */
+export function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.href;
+  } catch {
+    return url;
+  }
+}
+
+/** 두 URL이 같은 문서를 가리키는가. */
+export function sameDocument(a: string, b: string): boolean {
+  return normalizeUrl(a) === normalizeUrl(b);
 }
 
 /** content script를 주입할 수 없는 URL인지 판정. 시도 전에 거른다. */

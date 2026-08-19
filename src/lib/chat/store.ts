@@ -23,10 +23,19 @@ import {
   type Conversation,
   type StoredMessage,
 } from '@/lib/storage/db';
-import { buildContext, uncachedPrefillSeconds, type AttachedPage } from '@/lib/chat/context';
-import { sendToSW } from '@/lib/messaging/protocol';
-import type { AppError, ExtractedPage } from '@/lib/messaging/protocol';
+import {
+  buildContext,
+  uncachedPrefillSeconds,
+  type AttachedPage,
+  type Attachment,
+} from '@/lib/chat/context';
+import { sameDocument, sendToSW } from '@/lib/messaging/protocol';
+import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
+import { AGENT_TOOLS } from '@/lib/agent/tools';
+import { createExecutor, createTargetDescriber } from '@/lib/agent/executor';
+import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
+import { AGENT_GUIDE } from '@/lib/prompts/agent';
 
 /** 화면에 그리는 메시지. 저장 레코드에 스트리밍 중 상태가 얹힌다. */
 export interface UiMessage extends Omit<StoredMessage, 'id'> {
@@ -46,8 +55,18 @@ interface ChatState {
 
   /** 이 대화에 붙어 있는 페이지. 대화 내내 동일하게 유지된다(KV 캐시). */
   page: ExtractedPage | null;
-  /** 페이지 추출 진행 중 */
+  /**
+   * 붙어 있는 화면 캡처(base64 PNG).
+   * 실측상 약 262토큰 — 페이지 본문(2,000토큰)보다 8배 싸다.
+   */
+  screenshot: string | null;
+  /** 페이지 추출 또는 화면 캡처 진행 중 */
   extracting: boolean;
+  /**
+   * 패널이 알고 있는 현재 탭의 URL.
+   * 붙어 있는 첨부물이 아직 이 페이지의 것인지 대조하는 데 쓴다.
+   */
+  currentUrl: string;
 
   streaming: boolean;
   startedAt: number | null;
@@ -59,10 +78,30 @@ interface ChatState {
   /** 직전 요청의 컨텍스트. 접두사 캐시 적중분을 계산하는 데 쓴다. */
   lastContext: ChatMessage[] | null;
 
+  /* ── 에이전트 (Phase 5) ── */
+
+  /** 진행 중인 루프의 단계 기록. 완료 시 메시지에 실려 저장된다. */
+  agentSteps: AgentStep[];
+  /** 지금 몇 번째 턴인가. 0이면 에이전트가 돌고 있지 않다. */
+  agentTurn: number;
+  /**
+   * 승인 대기 중인 요청.
+   *
+   * ★ resolve를 부르기 전까지 루프는 여기서 멈춰 있다. 이 상태를 우회하는
+   *   경로(자동 승인·기억하기)는 만들지 않는다 — 계획서 §7의 실질 방어선이다.
+   */
+  pendingApproval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
+
   openForTab: (tabId: number, url: string) => Promise<void>;
   attachPage: (tabId: number, settings: Settings) => Promise<ExtractedPage | null>;
+  attachScreenshot: (tabId: number) => Promise<string | null>;
   detachPage: () => void;
+  detachScreenshot: () => void;
   send: (text: string, settings: Settings) => Promise<void>;
+  /** 에이전트 모드 전송 (Phase 5). 툴을 붙여 최대 8턴까지 돈다. */
+  sendAgent: (text: string, settings: Settings, tabId: number) => Promise<void>;
+  /** 승인 카드의 응답. false면 실행하지 않는다. */
+  resolveApproval: (approved: boolean) => void;
   regenerate: (settings: Settings) => Promise<void>;
   stop: () => void;
   setError: (e: string | null) => void;
@@ -74,13 +113,18 @@ export const useChat = create<ChatState>((set, get) => ({
   pending: null,
   messages: [],
   page: null,
+  screenshot: null,
   extracting: false,
+  currentUrl: '',
   streaming: false,
   startedAt: null,
   expectedPrefillSec: 0,
   error: null,
   abort: null,
   lastContext: null,
+  agentSteps: [],
+  agentTurn: 0,
+  pendingApproval: null,
 
   /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
   async openForTab(tabId, url) {
@@ -100,7 +144,11 @@ export const useChat = create<ChatState>((set, get) => ({
       conversation,
       pending: conversation ? null : { tabId, url },
       messages: stored,
+      // 첨부물은 페이지가 바뀌면 반드시 떼어낸다. 이전 페이지 본문을 물고 가면
+      // 모델이 엉뚱한 글을 근거로 답한다.
       page: null,
+      screenshot: null,
+      currentUrl: url,
       error: null,
       lastContext: null,
     });
@@ -135,14 +183,42 @@ export const useChat = create<ChatState>((set, get) => ({
       // 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
       if (current && current.url === page.url) return current;
 
-      set({ page, lastContext: null });
+      set({ page, currentUrl: page.url, lastContext: null });
       return page;
     } finally {
       set({ extracting: false });
     }
   },
 
+  /**
+   * 현재 탭 화면을 캡처해 붙인다.
+   *
+   * 본문 추출이 실패하는 페이지(캔버스 앱, 대시보드, 차트)에서 특히 유용하다 —
+   * 실측 262토큰 / 프리필 4.5초로, 본문을 넣는 것보다 오히려 싸고 빠르다.
+   */
+  async attachScreenshot(tabId) {
+    if (get().extracting) return get().screenshot;
+
+    set({ extracting: true, error: null });
+    try {
+      const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId });
+      if (res.type === 'ERROR') {
+        set({ error: describeError(res.error) });
+        return null;
+      }
+      if (res.type !== 'SCREENSHOT') return null;
+
+      // Ollama의 images 필드는 순수 base64를 받는다. data: 프리픽스를 떼어낸다.
+      const base64 = res.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+      set({ screenshot: base64, lastContext: null });
+      return base64;
+    } finally {
+      set({ extracting: false });
+    }
+  },
+
   detachPage: () => set({ page: null, lastContext: null }),
+  detachScreenshot: () => set({ screenshot: null, lastContext: null }),
 
   async send(text, settings) {
     const trimmed = text.trim();
@@ -164,6 +240,38 @@ export const useChat = create<ChatState>((set, get) => ({
     await runGeneration(set, get, settings);
   },
 
+  /**
+   * 에이전트 모드 전송 (Phase 5).
+   *
+   * ★ 호출 전에 호스트 권한이 확보돼 있어야 한다. 루프 도중에는 사용자
+   *   제스처가 없어 chrome.permissions.request가 거부된다(executor.ts 참조).
+   */
+  async sendAgent(text, settings, tabId) {
+    const trimmed = text.trim();
+    if (!trimmed || get().streaming) return;
+
+    const conv = await ensureConversation(set, get, trimmed);
+    if (!conv) return;
+
+    const userMsg: Omit<StoredMessage, 'id'> = {
+      conversationId: conv.id,
+      role: 'user',
+      content: trimmed,
+      createdAt: Date.now(),
+    };
+    const userId = await addMessage(userMsg);
+
+    set((s) => ({ messages: [...s.messages, { ...userMsg, id: userId }] }));
+    await runAgent(set, get, settings, tabId);
+  },
+
+  resolveApproval(approved) {
+    const pending = get().pendingApproval;
+    if (!pending) return;
+    set({ pendingApproval: null });
+    pending.resolve(approved);
+  },
+
   /** 재생성: 마지막 assistant 응답을 걷어내고 같은 입력으로 다시 돌린다. */
   async regenerate(settings) {
     if (get().streaming) return;
@@ -182,10 +290,18 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   stop() {
+    // 승인 대기 중에 중단을 누르면 그 동작은 거부로 처리한다.
+    // 대기 중인 Promise를 남겨 두면 루프가 영원히 멈춰 있게 된다.
+    const pending = get().pendingApproval;
+    if (pending) {
+      set({ pendingApproval: null });
+      pending.resolve(false);
+    }
+
     const { abort } = get();
     if (!abort) return;
     abort.abort();
-    set({ abort: null, streaming: false, startedAt: null });
+    set({ abort: null, streaming: false, startedAt: null, agentTurn: 0 });
   },
 
   setError: (e) => set({ error: e }),
@@ -225,16 +341,49 @@ async function ensureConversation(
   return conv;
 }
 
-function toAttached(page: ExtractedPage | null): AttachedPage | null {
-  if (!page) return null;
+function toAttachment(page: ExtractedPage | null, screenshot: string | null): Attachment {
+  const p: AttachedPage | null = page
+    ? {
+        url: page.url,
+        title: page.title,
+        text: page.text,
+        truncated: page.truncated,
+        keptRatio: page.keptRatio,
+      }
+    : null;
+  return { page: p, screenshot };
+}
+
+/**
+ * ★ 최종 안전망 — 첨부물이 아직 현재 페이지의 것인지 대조한다.
+ *
+ *   탭 변경 감지(background의 onUpdated)와 대화 이어가기 규칙(findForTab)이
+ *   이미 막고 있지만, 둘 다 브라우저 이벤트에 의존한다. iframe 이동이나
+ *   이벤트 유실 같은 경우에 낡은 본문이 남을 수 있다.
+ *
+ *   그 상태로 생성하면 모델이 **다른 글을 근거로 그럴듯하게** 답한다.
+ *   사용자가 알아채기 가장 어려운 종류의 오답이므로, 여기서 한 번 더 막고
+ *   왜 페이지가 빠졌는지 알린다.
+ */
+function freshAttachment(
+  set: Set,
+  get: Get,
+): { page: ExtractedPage | null; screenshot: string | null; stale: boolean } {
+  const currentUrl = get().currentUrl;
+  const rawPage = get().page;
+  const stale = Boolean(rawPage && currentUrl && !sameDocument(rawPage.url, currentUrl));
+
+  if (stale) set({ page: null, screenshot: null, lastContext: null });
+
   return {
-    url: page.url,
-    title: page.title,
-    text: page.text,
-    truncated: page.truncated,
-    keptRatio: page.keptRatio,
+    page: stale ? null : rawPage,
+    screenshot: stale ? null : get().screenshot,
+    stale,
   };
 }
+
+const STALE_NOTICE =
+  '페이지가 바뀌어 이전 본문을 떼어냈습니다. 현재 페이지 내용은 참조하지 않았습니다.';
 
 async function runGeneration(set: Set, get: Get, settings: Settings) {
   const conv = get().conversation;
@@ -242,9 +391,14 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
 
   const abort = new AbortController();
   const startedAt = Date.now();
-  const page = get().page;
 
-  const context = buildContext(get().messages, settings.numCtx, toAttached(page));
+  const { page, screenshot, stale } = freshAttachment(set, get);
+
+  const context = buildContext(
+    get().messages,
+    settings.numCtx,
+    toAttachment(page, screenshot),
+  );
   // 캐시 적중분을 뺀 예상 대기시간. 페이지를 붙인 후속 질문은 이 값이 거의 0이다.
   const expectedPrefillSec = uncachedPrefillSeconds(get().lastContext, context);
 
@@ -292,10 +446,15 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   };
 
   // 페이지를 처음 붙인 턴에만 절단 고지를 메시지에 남긴다.
-  const notice =
+  // 조용히 넘어가지 않는다 — 페이지 없이 답한 사실을 반드시 알린다.
+  const staleNotice = stale ? STALE_NOTICE : undefined;
+
+  const truncNotice =
     page?.truncated && !get().lastContext
       ? `본문이 길어 앞부분 ${Math.round(page.keptRatio * 100)}%만 참조했습니다.`
       : undefined;
+
+  const notice = staleNotice ?? truncNotice;
 
   try {
     perf = await streamChat(
@@ -389,6 +548,209 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       streaming: false,
       startedAt: null,
       abort: null,
+      lastContext: null,
+      error: aborted ? null : (err?.message ?? String(e)),
+    }));
+  }
+}
+
+/* ── 에이전트 루프 (Phase 5) ───────────────────────────── */
+
+/**
+ * 툴을 붙여 최대 8턴을 돈다. 계획서 §5 Phase 5-2
+ *
+ * ★ 일반 생성과 나눠 둔 이유는 비용이다. 툴 스키마 8종은 매 턴 프리필에
+ *   들어가므로, 툴이 필요 없는 대화에까지 붙이면 모든 질문이 느려진다.
+ *   그래서 에이전트는 사용자가 명시적으로 켰을 때만 이 경로로 온다.
+ */
+async function runAgent(set: Set, get: Get, settings: Settings, tabId: number) {
+  const conv = get().conversation;
+  if (!conv) return;
+
+  const abort = new AbortController();
+  const startedAt = Date.now();
+  const { page, screenshot, stale } = freshAttachment(set, get);
+
+  // ★ AGENT_GUIDE는 고정 블록 **뒤**에 들어간다. 앞을 건드리면 페이지 본문의
+  //   KV 캐시가 통째로 날아간다(context.ts extraSystem 주석 참조).
+  const context = buildContext(
+    get().messages,
+    settings.numCtx,
+    toAttachment(page, screenshot),
+    undefined,
+    AGENT_GUIDE,
+  );
+
+  const placeholder: UiMessage = {
+    id: 'streaming',
+    conversationId: conv.id,
+    role: 'assistant',
+    content: '',
+    thinking: '',
+    steps: [],
+    createdAt: startedAt,
+    streaming: true,
+  };
+
+  set((s) => ({
+    messages: [...s.messages, placeholder],
+    streaming: true,
+    startedAt,
+    expectedPrefillSec: uncachedPrefillSeconds(get().lastContext, context),
+    abort,
+    error: null,
+    agentSteps: [],
+    agentTurn: 0,
+  }));
+
+  let content = '';
+  let thinking = '';
+
+  // 토큰마다 리렌더하면 프레임을 놓친다. 60ms로 묶는 것은 일반 생성과 같다.
+  let pending = false;
+  const flush = () =>
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.id === 'streaming' ? { ...m, content, thinking, steps: s.agentSteps } : m,
+      ),
+    }));
+  const schedule = () => {
+    if (pending) return;
+    pending = true;
+    setTimeout(() => {
+      pending = false;
+      flush();
+    }, 60);
+  };
+
+  const execute = createExecutor(() => tabId);
+  const describeTarget = createTargetDescriber(() => tabId);
+
+  try {
+    const outcome = await runAgentLoop(
+      context,
+      {
+        chat: async (messages, handlers, signal): Promise<TurnResult> => {
+          let turnContent = '';
+          let turnThinking = '';
+          const toolCalls: TurnResult['toolCalls'] = [];
+
+          const perf = await streamChat(
+            settings.endpoint,
+            {
+              model: settings.model,
+              messages,
+              stream: true,
+              // ★ 여기서만 thinking을 켠다(계획서 Phase 5). 계획 단계의 정확도가
+              //   6.4배의 지연보다 중요한 유일한 지점이다. 'off'면 사용자 뜻대로 끈다.
+              think: settings.thinkMode !== 'off',
+              keep_alive: settings.keepAlive,
+              tools: AGENT_TOOLS,
+              options: { temperature: settings.temperature, num_ctx: settings.numCtx },
+            },
+            {
+              onToken: (t) => {
+                turnContent += t;
+                content = turnContent;
+                handlers.onToken?.(t);
+                schedule();
+              },
+              onThinking: (t) => {
+                turnThinking += t;
+                thinking += t;
+                handlers.onThinking?.(t);
+                schedule();
+              },
+              onToolCall: (c) => toolCalls.push(c),
+            },
+            signal,
+          );
+
+          return { content: turnContent, thinking: turnThinking, toolCalls, perf };
+        },
+
+        execute,
+        describeTarget,
+
+        // 승인 카드가 뜨고, 사용자가 누를 때까지 루프가 여기서 멈춘다.
+        approve: (request) =>
+          new Promise<boolean>((resolve) => set({ pendingApproval: { request, resolve } })),
+
+        currentPage: () => ({
+          url: get().currentUrl || page?.url || '',
+          title: page?.title ?? '',
+        }),
+
+        onEvent: (e) => {
+          if (e.type === 'turn-start') set({ agentTurn: e.turn });
+          else if (e.type === 'step') {
+            set((s) => ({ agentSteps: [...s.agentSteps, e.step] }));
+            flush();
+          }
+        },
+      },
+      {
+        maxTurns: settings.agentMaxTurns,
+        idleTimeoutMs: settings.agentIdleTimeoutMs,
+        signal: abort.signal,
+      },
+    );
+
+    content = outcome.content;
+    thinking = outcome.thinking;
+    const steps = outcome.steps;
+
+    const notice = stale ? STALE_NOTICE : outcome.notice;
+    const aborted = outcome.stopReason === 'aborted';
+
+    const id = await addMessage({
+      conversationId: conv.id,
+      role: 'assistant',
+      content,
+      thinking: thinking || undefined,
+      notice,
+      steps: steps.length > 0 ? steps : undefined,
+      perf: outcome.perf ?? undefined,
+      aborted: aborted || undefined,
+      createdAt: startedAt,
+    });
+
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.id === 'streaming'
+          ? {
+              ...m,
+              id,
+              content,
+              thinking: thinking || undefined,
+              notice,
+              steps: steps.length > 0 ? steps : undefined,
+              perf: outcome.perf ?? undefined,
+              aborted: aborted || undefined,
+              streaming: false,
+            }
+          : m,
+      ),
+      streaming: false,
+      startedAt: null,
+      abort: null,
+      agentTurn: 0,
+      pendingApproval: null,
+      // ★ 에이전트 턴은 캐시 기준으로 삼지 않는다. 툴 결과가 중간에 끼어
+      //   다음 일반 대화와 접두사가 어차피 어긋난다.
+      lastContext: null,
+    }));
+  } catch (e) {
+    const err = e instanceof OllamaError ? e : null;
+    const aborted = err?.code === 'ABORTED' || abort.signal.aborted;
+
+    set((s) => ({
+      messages: s.messages.filter((m) => m.id !== 'streaming'),
+      streaming: false,
+      startedAt: null,
+      abort: null,
+      agentTurn: 0,
+      pendingApproval: null,
       lastContext: null,
       error: aborted ? null : (err?.message ?? String(e)),
     }));

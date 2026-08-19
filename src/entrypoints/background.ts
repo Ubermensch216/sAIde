@@ -49,8 +49,19 @@ export default defineBackground(() => {
     if (tab) pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
   });
 
+  /**
+   * ★ status만 보면 안 된다.
+   *
+   *   `info.status === 'complete'`는 **전체 페이지 로드에서만** 발생한다.
+   *   pushState로 화면을 갈아끼우는 SPA(요즘 뉴스 사이트 다수)에서는 끝내
+   *   발생하지 않아, 패널이 이전 페이지를 그대로 물고 있게 된다 —
+   *   기사 A를 요약한 뒤 기사 B로 넘어가도 A 기준으로 답하는 증상.
+   *
+   *   history API 이동은 `info.url`로 온다. 둘 다 받아야 한다.
+   */
   chrome.tabs.onUpdated.addListener((_tabId, info, tab) => {
-    if (info.status === 'complete' && tab.active) {
+    if (!tab.active) return;
+    if (info.url || info.status === 'complete') {
       pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
     }
   });
@@ -127,13 +138,18 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
         const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
         return { type: 'SCREENSHOT', dataUrl };
       } catch (e) {
+        const raw = String(e);
+        // captureVisibleTab은 사이트별 권한을 인정하지 않는다 — <all_urls> 또는 activeTab만.
+        const needsAll = /all_urls|activeTab/i.test(raw);
         return {
           type: 'ERROR',
-          error: {
-            code: 'TAB_RESTRICTED',
-            message: '이 페이지는 캡처할 수 없습니다.',
-            hint: String(e),
-          },
+          error: needsAll
+            ? {
+                code: 'HOST_PERMISSION_REQUIRED',
+                message: '화면 캡처 권한이 없습니다.',
+                hint: '캡처는 모든 사이트 접근 권한이 필요합니다. 설정에서 허용하거나, 대신 페이지 본문 읽기를 사용하세요.',
+              }
+            : { code: 'TAB_RESTRICTED', message: '이 페이지는 캡처할 수 없습니다.', hint: raw },
         };
       }
     }

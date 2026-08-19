@@ -31,6 +31,20 @@ export interface Settings {
   /** 페이지 본문에 허용할 토큰. 2000 ≈ 한국어 4,000자 ≈ 프리필 약 15초. */
   pageTokenBudget: number;
 
+  /**
+   * Phase 5. 에이전트 모드(툴 콜링) 사용 여부.
+   * 기본 켜짐이되 입력창에서 명시적으로 켜야 동작한다 — 일반 대화가 매 턴
+   * 툴 스키마 프리필을 무는 일이 없어야 한다.
+   */
+  agentEnabled: boolean;
+  /** 루프 턴 상한. 이 하드웨어에서 1턴 약 25초라 8턴이면 최악 3분이다. */
+  agentMaxTurns: number;
+  /**
+   * 한 턴이 이만큼 아무것도 내놓지 못하면 중단(밀리초).
+   * ★ 총 턴 시간이 아니라 **무응답 시간**이다 — loop.ts 머리말 참조.
+   */
+  agentIdleTimeoutMs: number;
+
   /** Phase 6. 방문 페이지 임베딩 저장 여부 — 기본 꺼짐(옵트인). */
   memoryEnabled: boolean;
   /** 임베딩에서 제외할 도메인. */
@@ -55,6 +69,10 @@ export const DEFAULT_SETTINGS: Settings = {
   keepAlive: '10m',
   thinkMode: 'agent-only',
   pageTokenBudget: 2000,
+
+  agentEnabled: true,
+  agentMaxTurns: 8,
+  agentIdleTimeoutMs: 30_000,
 
   memoryEnabled: false,
   memoryExcludedDomains: [],

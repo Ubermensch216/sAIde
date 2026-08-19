@@ -21,6 +21,7 @@ import {
   type ThinkMode,
 } from '@/lib/storage/settings';
 import { SaideIcon } from '../sidepanel/components/BrandMark';
+import { PresetEditor } from './PresetEditor';
 import {
   grantedOrigins,
   hasAllUrls,
@@ -272,6 +273,80 @@ export default function OptionsApp() {
         </div>
       </section>
 
+      {/* ── 에이전트 (Phase 5) ── */}
+      <section>
+        <h2>에이전트</h2>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="agent">에이전트 모드 사용</label>
+            <input
+              id="agent"
+              type="checkbox"
+              checked={s.agentEnabled}
+              onChange={(e) => patch({ agentEnabled: e.target.checked })}
+            />
+          </div>
+          <p className="desc">
+            입력창 옆의 <strong>에이전트</strong> 버튼이 보입니다. 켜면 sAIde가 페이지를 직접
+            읽고 스크롤하며, 필요하면 클릭·입력·이동을 <strong>제안</strong>합니다.
+          </p>
+          {/*
+            자동 승인 옵션은 제공하지 않는다. 계획서 §7 — 승인 게이트가
+            프롬프트 인젝션의 실질적 방어선이고, 무르게 하는 순간 사라진다.
+          */}
+          <p className="desc">
+            클릭·입력·주소 이동은 <strong>매번 승인을 거칩니다.</strong> 자동 승인이나 "다시 묻지
+            않기"는 일부러 만들지 않았습니다 — 페이지에 숨겨진 지시문으로부터 지켜 주는 마지막
+            장치이기 때문입니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="turns">최대 턴 수</label>
+            <input
+              id="turns"
+              type="range"
+              min={2}
+              max={12}
+              step={1}
+              value={s.agentMaxTurns}
+              onChange={(e) => patch({ agentMaxTurns: Number(e.target.value) })}
+            />
+            <span className="val">{s.agentMaxTurns}턴</span>
+          </div>
+          {/* 비용을 숨기지 않는다. 이 하드웨어에서 1턴이 약 25초다. */}
+          <p className={s.agentMaxTurns * 25 > 240 ? 'warn' : 'desc'}>
+            한 턴에 약 25초가 걸리므로 최악의 경우 약{' '}
+            <strong>{Math.round((s.agentMaxTurns * 25) / 6) / 10}분</strong>까지 돌 수 있습니다.
+            중간에 언제든 중단할 수 있습니다.
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="idle">무응답 대기 한도</label>
+            <select
+              id="idle"
+              value={s.agentIdleTimeoutMs}
+              onChange={(e) => patch({ agentIdleTimeoutMs: Number(e.target.value) })}
+            >
+              <option value={20_000}>20초</option>
+              <option value={30_000}>30초 (권장)</option>
+              <option value={60_000}>60초</option>
+              <option value={120_000}>120초</option>
+            </select>
+          </div>
+          <p className="desc">
+            한 턴이 이 시간 동안 아무것도 내놓지 못하면 멈춥니다. 글자가 나오는 동안에는 시간이
+            다시 초기화되므로, 느리게라도 답하고 있으면 끊기지 않습니다.
+          </p>
+        </div>
+      </section>
+
+      <PresetEditor />
+
       {/* ── 페이지 접근 권한 ── */}
       <section>
         <h2>페이지 접근</h2>
@@ -300,6 +375,10 @@ export default function OptionsApp() {
           </div>
           <p className="desc">
             켜면 사이트마다 묻지 않습니다. 페이지 내용은 여전히 이 컴퓨터 밖으로 나가지 않습니다.
+          </p>
+          <p className="desc">
+            <strong>화면 캡처 기능은 이 권한이 반드시 필요합니다.</strong> 크롬이 캡처에 한해
+            사이트별 권한을 받아주지 않기 때문입니다. 본문 읽기는 사이트별 권한만으로 동작합니다.
           </p>
         </div>
 

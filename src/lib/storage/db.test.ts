@@ -35,11 +35,27 @@ describe('findForTab', () => {
     expect(await db.conversations.count()).toBe(0);
   });
 
-  it('같은 호스트의 기존 대화를 이어준다', async () => {
+  it('같은 문서면 대화를 이어준다', async () => {
     const id = await createConversation(1, 'https://example.com/a', '기존');
-    const found = await findForTab(1, 'https://example.com/b');
+    expect((await findForTab(1, 'https://example.com/a'))?.id).toBe(id);
+  });
 
-    expect(found?.id).toBe(id);
+  it('해시만 다르면 같은 문서로 본다 (문서 내 이동)', async () => {
+    const id = await createConversation(1, 'https://example.com/a', '기존');
+    expect((await findForTab(1, 'https://example.com/a#section2'))?.id).toBe(id);
+  });
+
+  it('★ 같은 호스트라도 다른 글이면 이어가지 않는다', async () => {
+    // 이것이 "기사 A를 요약한 뒤 기사 B를 물으면 A 기준으로 답하던" 버그의 원인이었다.
+    // 붙은 본문은 B로 바뀌는데 대화 이력에는 A에 대한 답이 남아 모델이 그쪽에 이끌린다.
+    await createConversation(1, 'https://news.example.com/article/1', '기사 A');
+    expect(await findForTab(1, 'https://news.example.com/article/2')).toBeNull();
+  });
+
+  it('쿼리로만 구분되는 글도 다른 문서로 본다', async () => {
+    // 뉴스 사이트에서 흔한 형태: articleView.html?idxno=214086
+    await createConversation(1, 'https://a.com/view.html?id=1', '기사 A');
+    expect(await findForTab(1, 'https://a.com/view.html?id=2')).toBeNull();
   });
 
   it('호스트가 다르면 이어가지 않는다', async () => {
