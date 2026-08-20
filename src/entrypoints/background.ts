@@ -80,11 +80,18 @@ export default defineBackground(() => {
 
 /* ── 컨텍스트 메뉴 (계획서 Phase 3-6) ───────────────────── */
 
-const MENUS: Array<{ id: string; title: string }> = [
-  { id: 'saide.translate', title: '이 문장 번역' },
-  { id: 'saide.explain', title: '쉽게 설명' },
-  { id: 'saide.polish', title: '문장 다듬기' },
-  { id: 'saide.send', title: 'sAIde 사이드패널로 보내기' },
+/**
+ * ★ 여기서만 chrome.i18n을 쓴다.
+ *   컨텍스트 메뉴는 서비스 워커가 만들고 크롬이 그린다. 우리 i18n 스토어는
+ *   사이드패널 문서에 있어서 워커에서 읽을 수 없다. 대신 브라우저 언어를
+ *   따르게 되므로, 앱 안에서 언어를 바꿔도 메뉴 문구는 그대로다 —
+ *   크롬이 확장 메뉴를 다시 그리게 할 방법이 없어 감수한다.
+ */
+const MENUS: Array<{ id: string; messageKey: string }> = [
+  { id: 'saide.translate', messageKey: 'menuTranslate' },
+  { id: 'saide.explain', messageKey: 'menuExplain' },
+  { id: 'saide.polish', messageKey: 'menuPolish' },
+  { id: 'saide.send', messageKey: 'menuSend' },
 ];
 
 function registerContextMenus() {
@@ -92,7 +99,7 @@ function registerContextMenus() {
     for (const m of MENUS) {
       chrome.contextMenus.create({
         id: m.id,
-        title: m.title,
+        title: chrome.i18n.getMessage(m.messageKey),
         contexts: ['selection'],
       });
     }

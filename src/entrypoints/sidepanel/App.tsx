@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { checkHealth, warmup, type HealthReport } from '@/lib/ollama/client';
+import { setLocale, useT } from '@/lib/i18n';
 import { useChat } from '@/lib/chat/store';
 import { listMessages, pruneEmptyConversations, type Conversation } from '@/lib/storage/db';
 import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
@@ -65,6 +66,7 @@ export default function App() {
   const [agentMode, setAgentMode] = useState(false);
   const warmedFor = useRef('');
 
+  const t = useT();
   const chat = useChat();
 
   /* ── 설정 ── */
@@ -72,6 +74,12 @@ export default function App() {
     loadSettings().then(setSettings);
     return onSettingsChanged(setSettings);
   }, []);
+
+  // 설정의 언어를 i18n 스토어에 반영한다. React 밖(스토어·오류 분류)에서도
+  // t()가 같은 로케일을 쓰도록 한 곳에서만 넣는다.
+  useEffect(() => {
+    setLocale(settings.locale);
+  }, [settings.locale]);
 
   /* ── 빈 대화 청소 ──
    * 이전 버전이 탭을 열 때마다 빈 대화를 만들어 두었다. 그 잔재를 걷어낸다.
@@ -229,7 +237,7 @@ export default function App() {
       // 코드를 붙여 넘긴다. 배너가 '권한 허용' 버튼을 달아 주는 근거다(Phase 7-2).
       chat.setError({
         code: 'HOST_PERMISSION_REQUIRED',
-        message: '이 사이트의 내용을 읽으려면 접근 권한이 필요합니다.',
+        message: t('perm.page.denied'),
       });
     }
     return ok;
@@ -248,10 +256,7 @@ export default function App() {
     if (!ok) {
       chat.setError({
         code: 'HOST_PERMISSION_REQUIRED',
-        message: '화면 캡처는 모든 사이트에 대한 접근 권한이 필요합니다.',
-        hint:
-          '크롬이 캡처 기능에 한해 사이트별 권한을 받아주지 않기 때문입니다. ' +
-          '허용하지 않으시려면 대신 "이 페이지 요약"으로 본문을 읽을 수 있습니다.',
+        message: t('perm.capture.denied'),
       });
     }
     return ok;
@@ -409,10 +414,10 @@ export default function App() {
           <span className="conv-chip">{chat.conversation.title}</span>
         )}
         <div className="spacer" />
-        <button className="icon-btn" onClick={() => setMenuOpen(true)} title="대화 목록" aria-label="대화 목록">
+        <button className="icon-btn" onClick={() => setMenuOpen(true)} title={t('panel.conversations')} aria-label={t('panel.conversations')}>
           <ListIcon />
         </button>
-        <button className="icon-btn" onClick={() => chrome.runtime.openOptionsPage()} title="설정" aria-label="설정">
+        <button className="icon-btn" onClick={() => chrome.runtime.openOptionsPage()} title={t('ui.settings')} aria-label={t('ui.settings')}>
           <GearIcon />
         </button>
       </header>
@@ -481,11 +486,13 @@ export default function App() {
                 className="minibtn"
                 disabled={blocked || chat.extracting}
                 onClick={attachCurrentPage}
-                title={`현재 페이지 본문을 대화에 붙입니다 (약 ${attachSec}초)`}
+                title={t('panel.attachPageHint', { sec: attachSec })}
               >
                 <PageIcon />
-                {chat.extracting ? '읽는 중…' : '페이지 붙이기'}
-                {!chat.extracting && <span className="cost">{attachSec}초</span>}
+                {chat.extracting ? t('panel.reading') : t('panel.attachPage')}
+                {!chat.extracting && (
+                  <span className="cost">{t('panel.secShort', { sec: attachSec })}</span>
+                )}
               </button>
             )}
             {showScreen && (
@@ -493,16 +500,17 @@ export default function App() {
                 className="minibtn"
                 disabled={blocked || chat.extracting}
                 onClick={attachCurrentScreen}
-                title="현재 화면을 캡처해 대화에 붙입니다 (약 5초)"
+                title={t('panel.attachScreenHint')}
               >
                 <CameraIcon />
-                화면 붙이기<span className="cost">5초</span>
+                {t('panel.attachScreen')}
+                <span className="cost">{t('panel.secShort', { sec: 5 })}</span>
               </button>
             )}
             {showRegen && (
-              <button className="minibtn" onClick={() => chat.regenerate(settings)} title="마지막 답변을 다시 생성합니다">
+              <button className="minibtn" onClick={() => chat.regenerate(settings)} title={t('panel.regenerateHint')}>
                 <RetryIcon />
-                다시 생성
+                {t('panel.regenerate')}
               </button>
             )}
             {canRunAgent && (
@@ -513,13 +521,13 @@ export default function App() {
                 onClick={() => setAgentMode((v) => !v)}
                 title={
                   agentMode
-                    ? '에이전트 모드 끄기'
-                    : '에이전트 모드 — 페이지를 직접 읽고 조작합니다. 클릭·입력·이동은 승인을 거칩니다.'
+                    ? t('agent.toggleOff')
+                    : t('agent.toggleOn')
                 }
               >
                 <AgentIcon />
-                에이전트
-                {agentMode && <span className="cost">켜짐</span>}
+                {t('agent.label')}
+                {agentMode && <span className="cost">{t('agent.on')}</span>}
               </button>
             )}
           </div>
@@ -604,10 +612,11 @@ function StreamingBar({
   onStop: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
+  const t = useT();
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(t);
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
   }, []);
 
   const sec = startedAt ? (now - startedAt) / 1000 : 0;
@@ -615,10 +624,10 @@ function StreamingBar({
 
   // 에이전트는 몇 턴째인지 알려준다. 1턴 25초라 진행감이 없으면 고장으로 보인다.
   const label = agentTurn > 0
-    ? `에이전트 ${agentTurn}/${maxTurns}턴`
+    ? t('agent.turn', { turn: agentTurn, max: maxTurns })
     : showEta
-      ? '페이지 읽는 중'
-      : '생성 중';
+      ? t('panel.readingPage')
+      : t('panel.generating');
 
   return (
     <div className="progress" role="status" aria-live="polite">
@@ -631,21 +640,24 @@ function StreamingBar({
         )}
       </div>
       <span className="eta">
-        {showEta ? `약 ${Math.max(1, Math.ceil(expectedSec - sec))}초` : `${sec.toFixed(1)}초`}
+        {showEta
+          ? t('health.aboutSec', { sec: Math.max(1, Math.ceil(expectedSec - sec)) })
+          : t('panel.elapsedSec', { sec: sec.toFixed(1) })}
       </span>
       <button className="btn-sm" onClick={onStop}>
-        중단
+        {t('composer.stopShort')}
       </button>
     </div>
   );
 }
 
 function WarmupProgress({ seconds }: { seconds: number }) {
+  const t = useT();
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const t = setInterval(() => setElapsed((e) => e + 0.25), 250);
-    return () => clearInterval(t);
+    const id = setInterval(() => setElapsed((e) => e + 0.25), 250);
+    return () => clearInterval(id);
   }, []);
 
   const pct = Math.min(97, (elapsed / seconds) * 100);
@@ -653,11 +665,11 @@ function WarmupProgress({ seconds }: { seconds: number }) {
 
   return (
     <div className="progress" role="status" aria-live="polite">
-      <span>모델 준비 중</span>
+      <span>{t('health.warming')}</span>
       <div className="track">
         <div className="fill" style={{ width: `${pct}%` }} />
       </div>
-      <span className="eta">약 {left}초</span>
+      <span className="eta">{t('health.aboutSec', { sec: left })}</span>
     </div>
   );
 }
@@ -687,14 +699,15 @@ function EmptyState({
   kindHint: string | null;
   onRun: (id: string) => void;
 }) {
+  const t = useT();
   return (
     <div className="empty">
       <SaideIcon size={48} />
-      <h2>{health.state === 'ok' ? '무엇을 도와드릴까요?' : 'sAIde'}</h2>
+      <h2>{health.state === 'ok' ? t('panel.empty.ready') : 'sAIde'}</h2>
       <p>
         {health.state === 'ok'
-          ? '이 컴퓨터 안에서만 도는 AI 조력자입니다. 대화 내용은 밖으로 나가지 않습니다.'
-          : '내 컴퓨터에서만 도는 AI 브라우저 조력자. 인터넷 없이 작동합니다.'}
+          ? t('panel.empty.readyBody')
+          : t('panel.empty.body')}
       </p>
 
       {canReadPage ? (

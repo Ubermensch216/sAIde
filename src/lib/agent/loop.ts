@@ -29,6 +29,7 @@ import {
   actionRequiresApproval,
   describeAction,
   parseToolCall,
+  recoverToolCall,
   shortLabel,
   signatureOf,
   type AgentAction,
@@ -232,12 +233,20 @@ export async function runAgentLoop(
     if (opts.signal?.aborted) return done('aborted');
 
     // ── 도구를 부르지 않았다 = 답변 완료 ──
-    if (result.toolCalls.length === 0) return done('answered');
+    //
+    // ★ 다만 본문에 호출문을 써 버린 경우는 한 번 주워 담는다(tools.ts 참조).
+    //   `#q 에 hello 를 입력해`처럼 모델의 판단은 맞았는데 형식만 깨진 사례가
+    //   실측에서 반복됐다. 되살린 호출도 승인 게이트를 똑같이 지난다.
+    const recovered =
+      result.toolCalls.length === 0 ? recoverToolCall(content) : null;
+    if (result.toolCalls.length === 0 && !recovered) return done('answered');
 
     // ★ 한 턴 한 액션(계획서 §5). 모델이 여러 개를 뱉어도 첫 번째만 쓴다.
     //   여러 액션을 한꺼번에 실행하면 승인 카드가 겹치고, 실패 시 어디까지
     //   진행됐는지 사용자에게 설명할 수 없게 된다.
-    const call = result.toolCalls[0]!;
+    const call = result.toolCalls[0] ?? recovered!;
+    // 본문에서 되살렸다면 그 호출문은 답변이 아니다. 화면에 남기지 않는다.
+    if (recovered) content = '';
     const startedAt = Date.now();
 
     // 모델의 호출을 이력에 남겨야 다음 턴에서 자기가 뭘 했는지 안다.

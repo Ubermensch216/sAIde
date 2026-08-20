@@ -18,6 +18,7 @@
  *   · **거부가 기본 포커스**
  */
 
+import { useT } from '@/lib/i18n';
 import { useEffect, useRef } from 'react';
 import type { ApprovalRequest } from '@/lib/messaging/protocol';
 
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export function ApprovalCard({ request, onDecide }: Props) {
+  const t = useT();
   const denyRef = useRef<HTMLButtonElement>(null);
 
   // 거부에 포커스를 둔다. Enter를 습관적으로 치는 사용자가 승인하게 두지 않는다.
@@ -45,10 +47,10 @@ export function ApprovalCard({ request, onDecide }: Props) {
   }, [onDecide]);
 
   return (
-    <div className="approval" role="alertdialog" aria-modal="true" aria-label="동작 승인 요청">
+    <div className="approval" role="alertdialog" aria-modal="true" aria-label={t('agent.approval.title')}>
       <div className="approval-head">
         <ShieldIcon />
-        <span>이 동작을 실행할까요?</span>
+        <span>{t('agent.approval.ask')}</span>
       </div>
 
       <p className="approval-what">{request.humanDescription}</p>
@@ -56,11 +58,11 @@ export function ApprovalCard({ request, onDecide }: Props) {
       <dl className="approval-detail">
         {request.targetLabel && (
           <>
-            <dt>대상</dt>
+            <dt>{t('agent.approval.target')}</dt>
             <dd>{request.targetLabel}</dd>
           </>
         )}
-        <dt>페이지</dt>
+        <dt>{t('agent.approval.page')}</dt>
         {/* 도메인을 앞세운다. 긴 URL은 잘려도 어디인지는 보여야 한다. */}
         <dd className="approval-url" title={request.pageUrl}>
           {hostOf(request.pageUrl)}
@@ -70,10 +72,10 @@ export function ApprovalCard({ request, onDecide }: Props) {
 
       <div className="approval-actions">
         <button ref={denyRef} className="btn-deny" onClick={() => onDecide(false)}>
-          거부
+          {t('agent.approval.deny')}
         </button>
         <button className="btn-allow" onClick={() => onDecide(true)}>
-          승인하고 실행
+          {t('agent.approval.allow')}
         </button>
       </div>
     </div>

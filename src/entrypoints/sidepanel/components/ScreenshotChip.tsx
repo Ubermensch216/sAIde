@@ -6,6 +6,8 @@
  * 담기 쉬우므로, 붙여 놓고 잊게 두면 안 된다.
  */
 
+import { useT } from '@/lib/i18n';
+
 interface Props {
   /** base64 PNG (data: 프리픽스 제외) */
   data: string;
@@ -13,21 +15,28 @@ interface Props {
 }
 
 export function ScreenshotChip({ data, onDetach }: Props) {
+  const t = useT();
   // 실측: 해상도와 무관하게 약 262토큰 / 프리필 4.5초
   const kb = Math.round((data.length * 3) / 4 / 1024);
 
   return (
     <div className="pagechip screenshot">
-      <img className="shot-thumb" src={`data:image/png;base64,${data}`} alt="붙인 화면 캡처" />
+      <img
+        className="shot-thumb"
+        src={`data:image/png;base64,${data}`}
+        alt={t('page.screenshotAlt')}
+      />
       <div className="pagechip-main">
-        <div className="pagechip-title">화면 캡처</div>
-        <div className="pagechip-meta">약 262토큰 · {kb.toLocaleString()}KB</div>
+        <div className="pagechip-title">{t('page.screenshot')}</div>
+        <div className="pagechip-meta">
+          {t('page.tokens', { n: 262 })} · {kb.toLocaleString()}KB
+        </div>
       </div>
       <button
         className="pagechip-x"
         onClick={onDetach}
-        title="화면 캡처 떼어내기"
-        aria-label="화면 캡처 떼어내기"
+        title={t('page.screenshotDetach')}
+        aria-label={t('page.screenshotDetach')}
       >
         ×
       </button>

@@ -2,6 +2,7 @@
  * 대화 목록. 계획서 Phase 2-4
  */
 
+import { useT } from '@/lib/i18n';
 import { useEffect, useState } from 'react';
 import {
   deleteConversation,
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export function ConversationMenu({ currentId, onPick, onClose, onDeleted }: Props) {
+  const t = useT();
   const [items, setItems] = useState<Conversation[]>([]);
 
   const reload = () => listConversations().then(setItems);
@@ -34,15 +36,15 @@ export function ConversationMenu({ currentId, onPick, onClose, onDeleted }: Prop
   return (
     <>
       <div className="sheet-scrim" onClick={onClose} />
-      <div className="sheet" role="dialog" aria-label="대화 목록">
+      <div className="sheet" role="dialog" aria-label={t('panel.conversations')}>
         <div className="sheet-head">
-          <span>대화</span>
+          <span>{t('conv.title')}</span>
           <button className="btn-sm" onClick={onClose}>
-            닫기
+            {t('ui.close')}
           </button>
         </div>
 
-        {items.length === 0 && <div className="sheet-empty">저장된 대화가 없습니다.</div>}
+        {items.length === 0 && <div className="sheet-empty">{t('conv.empty')}</div>}
 
         <ul className="conv-list">
           {items.map((c) => (
@@ -60,8 +62,8 @@ export function ConversationMenu({ currentId, onPick, onClose, onDeleted }: Prop
               <button
                 className="conv-del"
                 onClick={(e) => remove(e, c)}
-                aria-label={`${c.title} 삭제`}
-                title="삭제"
+                aria-label={t('conv.deleteOne', { title: c.title })}
+                title={t('ui.delete')}
               >
                 ×
               </button>

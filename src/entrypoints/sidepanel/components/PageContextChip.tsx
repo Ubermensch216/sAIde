@@ -6,6 +6,7 @@
  * 조용한 절단은 모델이 못 본 내용을 사용자는 봤다고 믿게 만든다.
  */
 
+import { useT, type MessageKey } from '@/lib/i18n';
 import type { ExtractedPage } from '@/lib/messaging/protocol';
 
 interface Props {
@@ -13,13 +14,14 @@ interface Props {
   onDetach: () => void;
 }
 
-const METHOD_LABEL: Record<ExtractedPage['method'], string> = {
-  readability: '본문',
-  innerText: '화면 텍스트',
-  'youtube-caption': '자막',
-};
+const METHOD_KEY = {
+  readability: 'page.method.readability',
+  innerText: 'page.method.innerText',
+  'youtube-caption': 'page.method.youtube',
+} as const satisfies Record<ExtractedPage['method'], MessageKey>;
 
 export function PageContextChip({ page, onDetach }: Props) {
+  const t = useT();
   const pct = Math.round(page.keptRatio * 100);
 
   return (
@@ -29,18 +31,19 @@ export function PageContextChip({ page, onDetach }: Props) {
           {page.title || hostOf(page.url)}
         </div>
         <div className="pagechip-meta">
-          {METHOD_LABEL[page.method]} · {page.estimatedTokens.toLocaleString()}토큰
+          {t(METHOD_KEY[page.method])} ·{' '}
+          {t('page.tokens', { n: page.estimatedTokens.toLocaleString() })}
           {page.truncated && (
             // 자리를 아끼려고 줄이지 않는다. 이 고지는 필수다.
-            <span className="pagechip-warn"> · 앞부분 {pct}%만 읽음</span>
+            <span className="pagechip-warn"> · {t('page.truncated', { pct })}</span>
           )}
         </div>
       </div>
       <button
         className="pagechip-x"
         onClick={onDetach}
-        title="페이지 떼어내기"
-        aria-label="페이지 떼어내기"
+        title={t('page.detach')}
+        aria-label={t('page.detach')}
       >
         ×
       </button>

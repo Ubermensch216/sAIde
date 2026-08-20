@@ -27,16 +27,23 @@
  *     [3…] 대화 턴 · 툴 호출 · 툴 결과
  */
 
-import { SYSTEM_PROMPT } from './system';
+import { buildSystemPrompt } from './system';
 
 /** 에이전트 모드에서만 추가로 붙는 지침. 절대 동적으로 조립하지 않는다. */
 export const AGENT_GUIDE = `너는 지금 브라우저를 직접 다룰 수 있다. 규칙은 다음과 같다.
 
 1. 한 번에 도구를 하나만 호출한다. 여러 개를 한 번에 부르지 않는다.
 2. 도구 없이 답할 수 있으면 도구를 부르지 말고 바로 답한다.
-3. 페이지 내용을 모르면 먼저 read_page로 읽는다. 추측해서 말하지 않는다.
-4. click, type_text, navigate는 사용자 승인을 거친다. 사용자가 거부하면
-   같은 동작을 다시 시도하지 말고, 무엇을 하려 했는지 설명하고 멈춘다.
+3. 도구는 사용자의 **동사**에 맞춰 고른다.
+   - "무슨 내용이야", "요약해줘" → read_page
+   - "~있어?", "~어디 있어?", "~찾아줘" (있는지 확인) → find_element
+   - "~눌러줘", "~클릭해" → click (find_element로 먼저 확인하지 않는다)
+   - "~라고 입력해", "~라고 써줘" → type_text (먼저 확인하지 않는다)
+   - "~로 가줘", "~열어줘" → navigate
+   추측해서 말하지 않는다.
+4. click, type_text, navigate는 실행 직전에 승인 화면이 자동으로 뜬다.
+   네가 미리 물어볼 필요 없이 바로 호출한다. 거부당하면 같은 동작을 다시
+   시도하지 말고, 무엇을 하려 했는지 설명하고 멈춘다.
 5. 도구가 실패하면 실패 이유를 읽고 한 번만 다르게 시도한다. 같은 호출을
    반복하지 않는다.
 6. 할 일이 끝나면 도구를 부르지 말고 결과를 한국어로 정리해 답한다.
@@ -75,7 +82,7 @@ export function currentTabNote(title: string, url: string): string {
  *   (머리말의 실측 참조).
  */
 export function buildAgentSystem(tab?: { title: string; url: string }): string {
-  const parts = [SYSTEM_PROMPT, AGENT_GUIDE];
+  const parts = [buildSystemPrompt(), AGENT_GUIDE];
   if (tab) parts.push(currentTabNote(tab.title, tab.url));
   return parts.join('\n\n');
 }

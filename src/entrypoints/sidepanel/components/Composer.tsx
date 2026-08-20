@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useT } from '@/lib/i18n';
 import { matchSlash, namesOf, type SlashCommand } from '@/lib/prompts/presets';
 import { SlashMenu } from './SlashMenu';
 
@@ -36,6 +37,7 @@ export function Composer({
   onSlash,
   onStop,
 }: Props) {
+  const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [active, setActive] = useState(0);
 
@@ -124,18 +126,23 @@ export function Composer({
           value={value}
           placeholder={
             disabled
-              ? 'Ollama 연결을 먼저 확인하세요'
+              ? t('composer.blocked')
               : agentMode
-                ? '무엇을 해 드릴까요?  (페이지를 직접 조작합니다)'
-                : '무엇이든 물어보세요  ( / 로 명령 )'
+                ? t('composer.agent')
+                : t('composer.normal')
           }
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
-          aria-label="메시지 입력"
+          aria-label={t('composer.label')}
         />
         {streaming ? (
-          <button className="send stop" onClick={onStop} aria-label="생성 중단" title="중단">
+          <button
+            className="send stop"
+            onClick={onStop}
+            aria-label={t('composer.stop')}
+            title={t('composer.stopShort')}
+          >
             <StopIcon />
           </button>
         ) : (
@@ -143,8 +150,8 @@ export function Composer({
             className="send"
             onClick={submit}
             disabled={!value.trim() || disabled}
-            aria-label="보내기"
-            title="보내기 (Enter)"
+            aria-label={t('composer.send')}
+            title={t('composer.sendHint')}
           >
             <SendIcon />
           </button>

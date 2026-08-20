@@ -10,6 +10,7 @@
  */
 
 import { useState } from 'react';
+import { useT } from '@/lib/i18n';
 import { presentError, type ErrorPresentation } from '@/lib/errors/describe';
 import type { AppError } from '@/lib/messaging/protocol';
 
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function ErrorBanner({ error, model, onClose, onAction }: Props) {
+  const t = useT();
   const p = presentError(error, model);
   if (p.silent) return null;
 
@@ -38,11 +40,11 @@ export function ErrorBanner({ error, model, onClose, onAction }: Props) {
       <div className="banner-actions">
         {p.action && (
           <button className="btn-sm" onClick={() => onAction(p.action!)}>
-            {p.actionLabel ?? '해결'}
+            {p.actionLabel ?? t('ui.resolve')}
           </button>
         )}
-        <button className="btn-sm" onClick={onClose} aria-label="오류 닫기">
-          닫기
+        <button className="btn-sm" onClick={onClose} aria-label={t('err.close')}>
+          {t('ui.close')}
         </button>
       </div>
     </div>
@@ -50,6 +52,7 @@ export function ErrorBanner({ error, model, onClose, onAction }: Props) {
 }
 
 function CopyableCommand({ command }: { command: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -62,7 +65,7 @@ function CopyableCommand({ command }: { command: string }) {
     <div className="cmd">
       <code>{command}</code>
       <button className="btn-sm" onClick={copy}>
-        {copied ? '복사됨' : '복사'}
+        {copied ? t('ui.copied') : t('ui.copy')}
       </button>
     </div>
   );

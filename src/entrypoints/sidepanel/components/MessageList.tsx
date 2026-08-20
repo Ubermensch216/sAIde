@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '@/lib/i18n';
 import type { UiMessage } from '@/lib/chat/store';
 import type { PerfSample } from '@/types/ollama';
 import { AgentSteps } from './AgentSteps';
@@ -49,6 +50,7 @@ function Message({
   dark: boolean;
   showThinking: boolean;
 }) {
+  const t = useT();
   if (msg.role === 'user') {
     return (
       <div className="msg msg-user">
@@ -78,7 +80,7 @@ function Message({
         <Markdown text={msg.content} streaming={msg.streaming} dark={dark} />
       )}
 
-      {msg.aborted && <div className="aborted">여기서 중단했습니다.</div>}
+      {msg.aborted && <div className="aborted">{t('msg.aborted')}</div>}
       {msg.perf && !msg.streaming && <PerfLine perf={msg.perf} />}
     </div>
   );
@@ -89,14 +91,15 @@ function Message({
  * 펼침이 기본이면 답변보다 사고 과정이 먼저 눈에 들어와 방해가 된다.
  */
 function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
     <div className={`thinking ${open ? 'open' : ''}`}>
       <button className="thinking-head" onClick={() => setOpen((o) => !o)}>
         <span className={`caret ${open ? 'open' : ''}`}>›</span>
-        <span>{live ? '생각하는 중…' : '생각 과정'}</span>
-        <span className="thinking-len">{text.length}자</span>
+        <span>{live ? t('msg.thinking') : t('msg.thoughts')}</span>
+        <span className="thinking-len">{t('msg.charCount', { n: text.length })}</span>
       </button>
       {open && <div className="thinking-body">{text}</div>}
     </div>
@@ -104,8 +107,9 @@ function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
 }
 
 function Typing() {
+  const t = useT();
   return (
-    <div className="typing" aria-label="응답 생성 중">
+    <div className="typing" aria-label={t('msg.generating')}>
       <span />
       <span />
       <span />
@@ -118,11 +122,12 @@ function Typing() {
  * CPU 추론에서는 사용자가 "왜 느린지"를 알 수 있어야 납득한다.
  */
 function PerfLine({ perf }: { perf: PerfSample }) {
+  const t = useT();
   return (
     <div className="perf">
       {(perf.ttfbMs / 1000).toFixed(1)}초 · {perf.decodeTokPerSec} tok/s ·{' '}
       {perf.promptTokens.toLocaleString()}→{perf.outputTokens.toLocaleString()} 토큰
-      {perf.wasCold && ' · 콜드 스타트'}
+      {perf.wasCold && t('msg.coldStart')}
     </div>
   );
 }

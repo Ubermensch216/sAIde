@@ -61,7 +61,7 @@ export const AGENT_TOOLS: ToolSchema[] = [
     function: {
       name: 'read_page',
       description:
-        '지금 보고 있는 페이지의 본문 텍스트를 읽는다. 내용을 알아야 할 때 먼저 쓴다.',
+        '페이지에 적힌 글의 내용을 읽는다. 무슨 내용인지 묻거나 요약이 필요할 때 쓴다. 버튼·링크를 찾는 용도가 아니다.',
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
@@ -70,7 +70,7 @@ export const AGENT_TOOLS: ToolSchema[] = [
     function: {
       name: 'find_element',
       description:
-        '페이지에서 버튼·링크·입력칸을 사람 말로 찾는다. 클릭하기 전에 대상이 있는지 확인할 때 쓴다.',
+        '버튼·링크·입력칸이 화면에 있는지 찾는다. "~버튼 있어?", "~창 어디 있어?", "~링크 찾아줘"에는 이 도구를 쓴다.',
       parameters: {
         type: 'object',
         properties: {
@@ -326,6 +326,70 @@ export function normalizeUrl(raw: string): string | null {
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
   return u.href;
+}
+
+/* ── 본문에 흘린 호출 복구 ─────────────────────────────── */
+
+/**
+ * 모델이 **도구를 부르는 대신 본문에 호출문을 써 버린 경우**를 되살린다.
+ *
+ * ★ 실측(2026-08-20, type_text 10건 · scroll 10건)에서 나온 실패 유형이다.
+ *   `#q 에 hello 를 입력해` → 도구 호출 0건, 본문에 이렇게 나왔다.
+ *
+ *     type_text{selector:<|"|>#q<|"|>,text:<|"|>hello<|"|>}
+ *
+ *   `<|"|>`는 gemma 계열의 따옴표 토큰이 그대로 새어 나온 것이다. 모델은
+ *   호출을 했는데 템플릿이 그것을 도구 호출로 파싱하지 못했다. 즉 모델의
+ *   판단은 맞았고 형식만 깨졌다 — 여기서 주워 담는다.
+ *
+ * ★ 되살린 호출도 승인 게이트를 그대로 지난다(§7). 본문에서 왔다는 이유로
+ *   더 신뢰하지 않는다. 오히려 공격자가 페이지 본문으로 모델에게 이 문장을
+ *   쓰게 만들 수 있으므로, 승인 없이 실행되는 일이 없어야 한다.
+ *
+ * ★ 도구 이름이 실제로 호출 형태(`이름{…}` 또는 `이름(…)`)로 쓰였을 때만
+ *   인정한다. "read_page로 읽어보겠습니다" 같은 문장은 건드리지 않는다.
+ */
+export function recoverToolCall(content: string): ToolCall | null {
+  const text = content.replace(/<\|"\|>/g, '"').replace(/<\|[^|]*\|>/g, '');
+  const names = TOOL_NAMES.join('|');
+  const re = new RegExp(String.raw`\b(${names})\s*(\{[^{}]*\}|\([^()]*\))`, 'g');
+
+  const m = re.exec(text);
+  if (!m) return null;
+
+  const name = m[1]!;
+  const body = m[2]!.slice(1, -1).trim();
+  // id는 Ollama가 붙여 주는 값이다. 우리가 만든 호출임을 알아볼 수 있게 표시한다.
+  return {
+    id: 'recovered',
+    function: { index: 0, name, arguments: parseLooseArgs(body) },
+  };
+}
+
+/**
+ * `selector:"#q", text:"hello"` 같은 느슨한 인자 목록을 읽는다.
+ * JSON이면 JSON으로 읽고, 아니면 키:값 쌍을 하나씩 줍는다 — 소형 모델이
+ * 흘리는 형식은 따옴표도 구분자도 일정하지 않다.
+ */
+function parseLooseArgs(body: string): Record<string, unknown> {
+  if (!body) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(`{${body.replace(/^\{|\}$/g, '')}}`);
+    if (isRecord(parsed)) return parsed;
+  } catch {
+    // JSON이 아니면 아래 규칙으로 줍는다.
+  }
+
+  const out: Record<string, unknown> = {};
+  const pair = /(["'`]?)([A-Za-z_]\w*)\1\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^,]+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = pair.exec(body)) !== null) {
+    const key = m[2]!;
+    const value = m[3] ?? m[4] ?? (m[5] ?? '').trim();
+    out[key] = /^-?\d+$/.test(value) ? Number(value) : value;
+  }
+  return out;
 }
 
 /* ── 승인 · 표시 ───────────────────────────────────────── */

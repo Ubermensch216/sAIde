@@ -8,6 +8,7 @@ import {
   parseToolCall,
   signatureOf,
   TOOL_NAMES,
+  recoverToolCall,
 } from './tools';
 import type { ToolCall } from '@/types/ollama';
 
@@ -186,5 +187,54 @@ describe('signatureOf — 무한루프 판정 기준', () => {
     expect(signatureOf({ kind: 'scroll', direction: 'down', amount: 100 })).toBe(
       signatureOf({ kind: 'scroll', direction: 'down', amount: 100 }),
     );
+  });
+});
+
+describe('recoverToolCall — 본문에 흘린 호출 되살리기', () => {
+  it('gemma가 따옴표 토큰째 흘린 호출을 읽는다 (실측 사례)', () => {
+    const call = recoverToolCall('type_text{selector:<|"|>#q<|"|>,text:<|"|>hello<|"|>}');
+    expect(call).not.toBeNull();
+    expect(parseToolCall(call!)).toEqual({
+      ok: true,
+      action: { kind: 'type_text', selector: '#q', text: 'hello' },
+    });
+  });
+
+  it('괄호와 등호로 쓴 형태도 읽는다', () => {
+    const call = recoverToolCall('먼저 scroll(direction="up") 하겠습니다.');
+    expect(parseToolCall(call!)).toEqual({
+      ok: true,
+      action: { kind: 'scroll', direction: 'up' },
+    });
+  });
+
+  it('JSON 형태도 읽는다', () => {
+    const call = recoverToolCall('navigate({"url": "https://example.com"})');
+    expect(parseToolCall(call!)).toEqual({
+      ok: true,
+      action: { kind: 'navigate', url: 'https://example.com/' },
+    });
+  });
+
+  it('인자 없는 도구도 읽는다', () => {
+    expect(recoverToolCall('read_page()')?.function.name).toBe('read_page');
+  });
+
+  it('숫자 인자는 숫자로 읽는다', () => {
+    expect(parseToolCall(recoverToolCall('scroll(direction=down, amount=500)')!)).toEqual({
+      ok: true,
+      action: { kind: 'scroll', direction: 'down', amount: 500 },
+    });
+  });
+
+  // ★ 여기서 과하게 주우면 평범한 설명문이 동작으로 바뀐다. 승인 카드가 있어도
+  //   사용자에게 뜬금없는 카드를 띄우는 것 자체가 게이트를 무디게 만든다.
+  it('도구 이름을 언급만 한 문장은 호출로 보지 않는다', () => {
+    expect(recoverToolCall('read_page 도구로 본문을 읽어보겠습니다.')).toBeNull();
+    expect(recoverToolCall('클릭하려면 click 도구가 필요합니다')).toBeNull();
+  });
+
+  it('없는 도구 이름은 줍지 않는다', () => {
+    expect(recoverToolCall('open_tab({"url":"https://x.com"})')).toBeNull();
   });
 });

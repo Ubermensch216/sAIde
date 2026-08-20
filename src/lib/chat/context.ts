@@ -17,7 +17,7 @@
  */
 
 import type { ChatMessage } from '@/types/ollama';
-import { PAGE_ACK, SYSTEM_PROMPT, wrapPageContent } from '@/lib/prompts/system';
+import { PAGE_ACK, buildSystemPrompt, wrapPageContent } from '@/lib/prompts/system';
 
 export interface ContextInput {
   role: 'user' | 'assistant' | 'system';
@@ -125,7 +125,7 @@ export function buildContext(
    *   시스템 메시지를 둘로 나누면 gemma4:e2b가 도구를 부르지 않는다 —
    *   실측 근거는 prompts/agent.ts 머리말.
    */
-  systemPrompt: string = SYSTEM_PROMPT,
+  systemPrompt: string = buildSystemPrompt(),
 ): ChatMessage[] {
   const att = normalizeAttachment(attachment);
   const ctx: ChatMessage[] = [{ role: 'system', content: systemPrompt }];

@@ -1,0 +1,10 @@
+{
+  "extName":        { "message": "sAIde — your AI aide, on the side", "description": "Extension name" },
+  "extDescription": { "message": "An AI browser aide that runs entirely on your machine. Works without internet.", "description": "Store and extensions page description" },
+  "actionTitle":    { "message": "Open sAIde", "description": "Toolbar icon tooltip" },
+  "commandOpen":    { "message": "Open the sAIde side panel", "description": "Keyboard shortcut description" },
+  "menuTranslate":  { "message": "Translate this", "description": "Context menu" },
+  "menuExplain":    { "message": "Explain simply", "description": "Context menu" },
+  "menuPolish":     { "message": "Polish this text", "description": "Context menu" },
+  "menuSend":       { "message": "Send to the sAIde side panel", "description": "Context menu" }
+}

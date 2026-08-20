@@ -17,6 +17,7 @@ import {
   saveSettings,
   MEASURED_PREFILL_TOK_PER_SEC,
   type Settings,
+  type Locale,
   type ThemePref,
   type ThinkMode,
 } from '@/lib/storage/settings';
@@ -431,6 +432,24 @@ export default function OptionsApp() {
               <option value="dark">어둡게</option>
             </select>
           </div>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="locale">언어 · Language</label>
+            <select
+              id="locale"
+              value={s.locale}
+              onChange={(e) => patch({ locale: e.target.value as Locale })}
+            >
+              <option value="ko">한국어</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <p className="desc">
+            사이드패널 화면과 모델의 답변 언어가 함께 바뀝니다. 확장 이름과 우클릭 메뉴는 브라우저
+            언어를 따릅니다.
+          </p>
         </div>
       </section>
 

@@ -9,6 +9,7 @@
  *   그래서 "붙이기"는 비싸고 "이어 묻기"는 싸다 — UI도 그 구조를 따른다.
  */
 
+import { useT } from '@/lib/i18n';
 import { PAGE_PRESETS } from '@/lib/prompts/presets';
 
 interface Props {
@@ -37,6 +38,7 @@ export function PageActions({
   kindHint,
   onRun,
 }: Props) {
+  const t = useT();
   const presets = order
     ? [...PAGE_PRESETS].sort((a, b) => rank(order, a.id) - rank(order, b.id))
     : PAGE_PRESETS;
@@ -58,13 +60,13 @@ export function PageActions({
       </div>
 
       {extracting ? (
-        <div className="pageactions-hint">페이지를 읽는 중…</div>
+        <div className="pageactions-hint">{t('page.reading')}</div>
       ) : (
         <>
           <div className="pageactions-hint">
             {attached
-              ? '이 페이지에 대해 계속 물어볼 수 있습니다. 후속 질문은 빠릅니다.'
-              : `본문을 읽는 데 약 ${Math.max(1, Math.round(estimatedSec))}초, 화면 캡처는 약 5초 걸립니다.`}
+              ? t('page.attached')
+              : t('page.costHint', { sec: Math.max(1, Math.round(estimatedSec)) })}
           </div>
           {kindHint && <div className="pageactions-hint kind">{kindHint}</div>}
         </>

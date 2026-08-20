@@ -6,10 +6,12 @@
  *   숨기면 안 된다. 특히 승인해서 클릭·입력이 일어난 경우가 그렇다.
  */
 
+import { useT } from '@/lib/i18n';
 import { useState } from 'react';
 import type { AgentStep } from '@/lib/agent/loop';
 
 export function AgentSteps({ steps, live }: { steps: AgentStep[]; live?: boolean }) {
+  const t = useT();
   if (steps.length === 0) return null;
 
   return (
@@ -20,7 +22,7 @@ export function AgentSteps({ steps, live }: { steps: AgentStep[]; live?: boolean
       {live && (
         <li className="step running">
           <span className="dot" />
-          <span className="step-label">다음 동작을 고르는 중…</span>
+          <span className="step-label">{t('agent.steps.choosing')}</span>
         </li>
       )}
     </ol>
@@ -28,6 +30,7 @@ export function AgentSteps({ steps, live }: { steps: AgentStep[]; live?: boolean
 }
 
 function Step({ step }: { step: AgentStep }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const denied = step.approved === false;
   const state = denied ? 'denied' : step.ok ? 'ok' : 'fail';
@@ -35,11 +38,11 @@ function Step({ step }: { step: AgentStep }) {
   return (
     <li className={`step ${state}`}>
       <span className="dot" />
-      <button className="step-label" onClick={() => setOpen((o) => !o)} title="결과 보기">
+      <button className="step-label" onClick={() => setOpen((o) => !o)} title={t('agent.steps.show')}>
         {step.label}
-        {step.approved === true && <span className="badge">승인됨</span>}
-        {denied && <span className="badge deny">거부됨</span>}
-        <span className="ms">{(step.ms / 1000).toFixed(1)}초</span>
+        {step.approved === true && <span className="badge">{t('agent.steps.approved')}</span>}
+        {denied && <span className="badge deny">{t('agent.steps.denied')}</span>}
+        <span className="ms">{t('agent.steps.sec', { sec: (step.ms / 1000).toFixed(1) })}</span>
       </button>
       {open && <div className="step-detail">{step.detail}</div>}
     </li>

@@ -32,6 +32,16 @@ const MODEL = 'gemma4:e2b';
 const THINK = process.env.SAIDE_AGENT_THINK === '1';
 const NUM_CTX = 4096;
 
+/**
+ * 특정 도구만 재고 싶을 때 쓴다. `SAIDE_TOOLS=type_text,scroll npm run test:live`
+ * 80건 전체가 40분 걸려 원인 하나를 좁힐 때마다 전부 돌릴 수 없다.
+ * 지정하면 합격선 검사는 건너뛴다 — 부분 집합의 비율은 §9 기준이 아니다.
+ */
+const ONLY = (process.env.SAIDE_TOOLS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 /** 계획서 5-5의 합격선. */
 const PASS_RATE = 0.8;
 
@@ -175,6 +185,9 @@ async function runScenario(prompt: string, maxTurns: number) {
     buildAgentSystem(TAB),
   );
 
+  /** 모델이 실제로 뱉은 원본 호출. 파싱 이전이라 계측 불일치를 여기서 본다. */
+  const raw: Array<{ name?: string; args: unknown }> = [];
+
   const t0 = Date.now();
   const outcome = await runAgentLoop(
     seed,
@@ -203,7 +216,10 @@ async function runScenario(prompt: string, maxTurns: number) {
               thinking += t;
               handlers.onThinking?.(t);
             },
-            onToolCall: (c) => toolCalls.push(c),
+            onToolCall: (c) => {
+              raw.push({ name: c.function?.name, args: c.function?.arguments });
+              toolCalls.push(c);
+            },
           },
           signal,
         );
@@ -220,6 +236,8 @@ async function runScenario(prompt: string, maxTurns: number) {
 
   return {
     tools: outcome.steps.map((s) => s.tool),
+    raw,
+    content: outcome.content,
     stopReason: outcome.stopReason,
     ms: Date.now() - t0,
   };
@@ -263,9 +281,16 @@ describe('에이전트 툴 (실서버)', () => {
         first: boolean;
         ms: number;
         prompt: string;
+        raw: Array<{ name?: string; args: unknown }>;
+        stopReason: string;
+        content: string;
       }> = [];
 
-      for (const [want, prompts] of Object.entries(SCENARIOS) as Array<[ToolName, string[]]>) {
+      const table = (Object.entries(SCENARIOS) as Array<[ToolName, string[]]>).filter(
+        ([want]) => ONLY.length === 0 || ONLY.includes(want),
+      );
+
+      for (const [want, prompts] of table) {
         for (const prompt of prompts) {
           const r = await runScenario(prompt, maxTurns);
           rows.push({
@@ -275,6 +300,9 @@ describe('에이전트 툴 (실서버)', () => {
             first: r.tools[0] === want,
             ms: r.ms,
             prompt,
+            raw: r.raw,
+            stopReason: r.stopReason,
+            content: r.content,
           });
         }
         const group = rows.filter((x) => x.want === want);
@@ -294,8 +322,18 @@ describe('에이전트 툴 (실서버)', () => {
       console.log('\n  실패한 시나리오:');
       for (const r of rows.filter((x) => !x.hit)) {
         console.log(`   ${r.want} → [${r.used.join(', ') || '도구 없음'}] : ${r.prompt}`);
+        // ★ 단계 목록은 파싱을 통과한 것만 보여준다. 모델이 무엇을 뱉었는지는
+        //   원본 호출을 봐야 안다 — 계측 불일치(§11.5-3)를 여기서 판별한다.
+        console.log(
+          `      원본 ${JSON.stringify(r.raw)} · 종료 ${r.stopReason} · 본문 ${JSON.stringify(r.content.slice(0, 160))}`,
+        );
       }
 
+      if (ONLY.length > 0) {
+        console.log(`
+  (SAIDE_TOOLS=${ONLY.join(',')} — 부분 측정이라 합격선을 적용하지 않는다)`);
+        return;
+      }
       expect(rate).toBeGreaterThanOrEqual(PASS_RATE);
     },
     // 80건 × (최대 3턴). thinking ON이면 훨씬 오래 걸린다.

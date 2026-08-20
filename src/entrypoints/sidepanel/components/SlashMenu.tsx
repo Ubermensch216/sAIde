@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { useT } from '@/lib/i18n';
 import type { SlashCommand } from '@/lib/prompts/presets';
 
 interface Props {
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function SlashMenu({ commands, active, onPick, onHover }: Props) {
+  const t = useT();
   const listRef = useRef<HTMLUListElement>(null);
 
   // 키보드로 옮길 때 선택 항목이 보이도록 스크롤을 맞춘다.
@@ -27,7 +29,7 @@ export function SlashMenu({ commands, active, onPick, onHover }: Props) {
   if (commands.length === 0) return null;
 
   return (
-    <ul className="slashmenu" ref={listRef} role="listbox" aria-label="명령 목록">
+    <ul className="slashmenu" ref={listRef} role="listbox" aria-label={t('composer.commands')}>
       {commands.map((c, i) => (
         <li
           key={c.slash + c.presetId}
@@ -44,8 +46,8 @@ export function SlashMenu({ commands, active, onPick, onHover }: Props) {
           <span className="slash-cmd">{c.slash}</span>
           <span className="slash-label">{c.label}</span>
           {c.hint && <span className="slash-hint">{c.hint}</span>}
-          {c.needs === 'page' && <span className="slash-badge">페이지</span>}
-          {c.needs === 'screen' && <span className="slash-badge">화면</span>}
+          {c.needs === 'page' && <span className="slash-badge">{t('composer.needsPage')}</span>}
+          {c.needs === 'screen' && <span className="slash-badge">{t('composer.needsScreen')}</span>}
         </li>
       ))}
     </ul>

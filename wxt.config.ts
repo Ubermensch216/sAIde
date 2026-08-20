@@ -11,9 +11,13 @@ export default defineConfig({
   }),
 
   manifest: {
-    name: 'sAIde — 옆에서 돕는 AI',
+    // ★ __MSG_*__ 는 public/_locales/{ko,en}/messages.json 에서 온다.
+    //   이 필드들은 크롬이 스토어·확장 관리 화면에 직접 그리므로 우리 i18n
+    //   모듈이 아니라 chrome.i18n 규약을 따라야 한다.
+    name: '__MSG_extName__',
     short_name: 'sAIde',
-    description: '내 컴퓨터에서만 도는 AI 브라우저 조력자. 인터넷 없이 작동합니다.',
+    default_locale: 'ko',
+    description: '__MSG_extDescription__',
     icons: {
       16: 'icon/16.png',
       32: 'icon/32.png',
@@ -22,7 +26,7 @@ export default defineConfig({
     },
 
     action: {
-      default_title: 'sAIde 열기',
+      default_title: '__MSG_actionTitle__',
     },
 
     permissions: [
@@ -50,7 +54,7 @@ export default defineConfig({
     commands: {
       _execute_action: {
         suggested_key: { default: 'Ctrl+Shift+S' },
-        description: 'sAIde 사이드패널 열기',
+        description: '__MSG_commandOpen__',
       },
     },
   },
