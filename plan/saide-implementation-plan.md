@@ -1,6 +1,6 @@
 # sAIde — 세부 구현 계획서 (v3)
 
-**기준 문서:** `saideplan.md` (v2) · `saidebrandsheet.html` · `saidebrandassets/brand/*`
+**기준 문서:** `saideplan.md` (v2) · `brand/saide-brand-sheet.html` · `brand/*`
 **작성일:** 2026-08-19
 **성격:** v2 계획서를 **실측 데이터로 검증하고 재조정한 실행용 문서**. v2가 "무엇을 만들 것인가"라면, 이 문서는 "이 하드웨어에서 실제로 어떻게 만들 것인가"이다.
 
@@ -88,7 +88,10 @@ ollama ps →  gemma4:e2b   6.9 GB   100% CPU   16384
 | Ink `#14121C` on Paper | 17.74:1 | — | ✅ AAA |
 
 자산 실물도 전수 확인했다. PNG 5종(16/32/48/128/512) + 모노 128 크기 정확, SVG 6종 모두 유효.
-`saidebrandsheet.html`과 `saidebrandassets/brand/saide-brand-sheet.html`은 **md5 동일 — 완전 중복 파일**이다.
+브랜드 시트는 `plan/`과 `plan/saidebrandassets/brand/`에 md5 동일한 사본으로 둘 있었다.
+**2026-08-20에 `brand/saide-brand-sheet.html` 하나로 합쳤고**, 자산 전체도 `brand/`로 모았다.
+사이즈별 PNG(16/32/48/128)는 `public/icon/`이 빌드 입력이므로 그쪽만 남긴다 —
+`brand/icons/`에는 원본 마스터(512, 모노 128)만 둔다.
 
 ---
 
@@ -235,10 +238,12 @@ D:/Dev/sAIde/
 ├── wxt.config.ts
 ├── package.json                   # name: "saide"
 ├── tsconfig.json
-├── brand/                         # ← plan/saidebrandassets/brand/ 에서 이동
+├── brand/                         # 브랜드 자산 단일 원본(SSOT)
+│   ├── saide-brand-sheet.html
 │   ├── saide-icon.svg  saide-icon-small.svg  saide-icon-mono.svg
 │   ├── saide-wordmark.svg  saide-wordmark-dark.svg
-│   └── saide-lockup.svg
+│   ├── saide-lockup.svg
+│   └── icons/icon-512.png  icon-mono-128.png    # 원본 마스터만
 ├── public/
 │   └── icon/16.png 32.png 48.png 128.png    # ← brand/icons/ 에서 리네임 복사
 └── src/
@@ -827,7 +832,7 @@ v2 §11의 잔여 과제를 실측 결과로 갱신했다.
 | 로고 폰트 아웃라인 변환 | 미완 | ⬜ **Phase 7 필수.** 현재 `saide-wordmark*.svg`·`saide-lockup.svg`가 `font-family="Inter, Pretendard, …"` 시스템 스택에 의존 → 환경별 자형 불일치 |
 | 웹스토어 프로모 이미지 | 미착수 | ⬜ Phase 7 |
 | 상표 검색 | 미착수 | ⬜ 착수 전 권장. `side`가 일반명사라 단독 등록 난망 — **로고 결합상표** 권장 |
-| **중복 파일 정리** | — | ⬜ **신규.** `plan/saidebrandsheet.html`과 `plan/saidebrandassets/brand/saide-brand-sheet.html`이 md5 동일. 하나만 남긴다 |
+| **중복 파일 정리** | — | ✅ **완료 (2026-08-20).** 자산 전체를 `brand/`로 합쳤다. `plan/saidebrandassets/` 삭제 |
 
 **아웃라인 변환 절차 (Phase 7):** Inter 800/600을 설치한 환경에서 Inkscape `Path > Object to Path` 또는 `fonttools`로 글리프를 패스화한다. 변환 후 **자간 `-1.5px`가 유지되는지 육안 검증** 필수.
 
@@ -901,12 +906,12 @@ UHD 770(2GB 공유)으로는 7.2GB 모델을 올릴 수 없어 100% CPU로 돌�
 |---|---|
 | Phase 0–5 | ✅ 완료 — 5-5 툴 정확도 **93.8%** 로 §9 합격선(80%) 통과 |
 | 7-1 성능 대시보드 · 7-2 오류 문구 단일화 · 7-3 다크모드 | ✅ 완료 |
-| **7-4 i18n (ko/en)** | ✅ **완료** — UI 카탈로그 130여 키, `_locales`로 manifest 필드, 설정에 언어 선택, 시스템 프롬프트 로케일 대응 |
+| **7-4 i18n (ko/en)** | ✅ **완료** — UI 카탈로그 약 220키. 사이드패널 · **설정 화면 · 성능 대시보드 · 프리셋 편집 · 서비스 워커 오류**까지. `_locales`는 manifest 필드 전용 |
 | **7-6 오프라인 동작** | ✅ **검증 완료** — 외부 호스트·CDN·웹폰트 0건. fetch 대상은 Ollama와 유튜브 자막(페이지 자체 리소스)뿐 |
 | 7-5 로고 폰트 아웃라인 | ⬜ **미완** — Inter 폰트·변환 도구(fonttools/Inkscape)가 이 환경에 없다. 디자인 도구에서 처리 필요 |
 | 7-7 배포 | ⬜ `npm run zip`은 있으나 스토어 등록 자산(프로모 이미지) 미착수 |
 | Phase 6 메모리·RAG | ⬜ 미착수 (계획서상 선택) |
-| 중복 브랜드 시트 정리 | ⬜ md5 동일한 사본 2개 |
+| 중복 브랜드 시트 정리 | ✅ 완료 — `brand/` 한 곳으로 합침 |
 
 ### ✅ Phase 5 툴 선택 정확도 — 93.8%로 합격 (2026-08-20)
 
@@ -956,6 +961,25 @@ click·type_text의 첫 턴이 3/10인 것은 실패가 아니다 — 모델이 
 축약본이 click 9/10 · type_text 9/10으로 같고 첫 턴은 오히려 나았다(45% vs 40%).
 턴마다 무는 프리필이 그만큼 줄어 축약본을 남긴다.
 
+### i18n 마무리 (2026-08-20)
+
+설정 화면 3종(`OptionsApp` · `PerfDashboard` · `PresetEditor`)과 서비스 워커의
+사용자 노출 오류 문구를 카탈로그로 옮겼다. 그 과정에서 셋을 함께 정리했다.
+
+- **강조를 위해 문장을 쪼개지 않는다.** `rich()`가 `**강조**`를 `<strong>`으로
+  바꾼다. 앞·강조·뒤 세 키로 나누면 번역자가 문장을 못 보고, 어순이 다른
+  언어에서는 조각이 아예 맞지 않는다.
+- **표시 문자열을 데이터 계층에서 걷어냈다.** `perf/stats.ts`의 `BUCKETS`가
+  한국어 `label`을 들고 있었다. `id`만 남기고 화면이 카탈로그에서 찾게 했다.
+- **서비스 워커에도 로케일을 물려준다.** 워커가 만든 오류 중 `UNKNOWN` 코드는
+  `describe.ts`가 분류하지 못해 원문이 그대로 화면에 뜬다. 그 원문이 사용자의
+  언어여야 한다.
+
+**남은 구멍: `injected.ts`의 도구 결과 문구.** 페이지 컨텍스트에서 도는 스크립트라
+설정 저장소에 닿지 않는다. 이 문구들은 모델에게 가는 동시에 실행 단계 목록에도
+보이므로, 영어 사용자에게 한국어가 남는다. 고치려면 액션 payload에 로케일을
+실어 보내야 한다 — 프로토콜 변경이라 별도 작업으로 분리한다.
+
 ### 하니스 검증 결과 — 계측은 정상이었다
 
 §11.5의 3번 가설(`type_text` 계측 불일치)은 **기각한다.** 원본 도구 호출을
@@ -1002,7 +1026,6 @@ v2 §10 중 1번은 완료됐다.
    ```
 3. `npx wxt@latest init saide` → `brand/`, `public/icon/` 배치
 4. **§4의 세 계약 파일(`ollama.d.ts` · `protocol.ts` · `settings.ts`)을 코드보다 먼저 작성**
-5. 중복 브랜드 시트 1개 정리
 6. 상표 · 도메인 · 저장소명 선점 확인 *(v2 §10-5 유지)*
 
 ---
@@ -1025,4 +1048,4 @@ ollama ps
 
 ---
 
-*본 문서는 `saideplan.md`(v2)를 대체하지 않고 보완한다. 브랜드 정의는 `saidebrandsheet.html`이 계속 단일 원본(SSOT)이다.*
+*본 문서는 `saideplan.md`(v2)를 대체하지 않고 보완한다. 브랜드 정의는 `brand/saide-brand-sheet.html`이 계속 단일 원본(SSOT)이다.*

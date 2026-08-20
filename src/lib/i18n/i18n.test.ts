@@ -47,7 +47,11 @@ describe('카탈로그 완결성', () => {
   });
 
   it('영어 카탈로그에 한글이 남아 있지 않다', () => {
+    // 언어 선택 항목만 예외다. 지금 화면의 언어를 못 읽는 사람이 바로 그
+    // 항목을 찾아야 하므로, 양쪽 카탈로그 모두 두 언어를 함께 적는다.
+    const allowHangul = new Set<MessageKey>(['opt.display.locale']);
     for (const k of Object.keys(MESSAGES.en) as MessageKey[]) {
+      if (allowHangul.has(k)) continue;
       expect(/[가-힣]/.test(MESSAGES.en[k]), k).toBe(false);
     }
   });

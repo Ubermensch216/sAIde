@@ -10,6 +10,8 @@
  *   온디맨드 방식이다. 사용자가 버튼을 누른 순간에만 주입한다.
  */
 
+import { setLocale, t } from '@/lib/i18n';
+import { loadSettings, onSettingsChanged } from '@/lib/storage/settings';
 import {
   isRestrictedUrl,
   type ContentToSW,
@@ -22,6 +24,14 @@ import {
 const INJECTED_SCRIPT = 'injected.js';
 
 export default defineBackground(() => {
+  // ★ 워커에도 로케일을 물려준다.
+  //   여기서 만든 오류 문구 중 일부는 UNKNOWN 코드로 패널에 그대로 뜬다 —
+  //   describe.ts가 분류하지 못하는 것들이라 원문이 유일한 단서다. 그 원문이
+  //   사용자의 언어여야 한다. 워커는 자체 모듈 인스턴스를 갖고 있으므로
+  //   저장소에서 읽어 한 번 맞춰 두고, 이후 설정 변경도 따라간다.
+  void loadSettings().then((s) => setLocale(s.locale));
+  onSettingsChanged((s) => setLocale(s.locale));
+
   // 툴바 아이콘 클릭 → 사이드패널. 이 한 줄이 없으면 아이콘이 아무 반응도 없다.
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
@@ -127,7 +137,7 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
       });
       if (res.type === 'EXTRACTED') return { type: 'PAGE_EXTRACTED', payload: res.payload };
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
-      return { type: 'ERROR', error: { code: 'UNKNOWN', message: '추출 실패' } };
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
     }
 
     case 'EXEC_ACTION': {
@@ -137,7 +147,7 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
       const res = await withContentScript(msg.tabId, { type: 'ACT', action: msg.action });
       if (res.type === 'ACTED') return { type: 'ACTION_RESULT', ok: res.ok, detail: res.detail };
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
-      return { type: 'ERROR', error: { code: 'UNKNOWN', message: '액션 실패' } };
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.actionFailed') } };
     }
 
     case 'CAPTURE_SCREENSHOT': {
@@ -169,15 +179,18 @@ async function navigate(tabId: number, action: PageAction & { kind: 'navigate' }
   try {
     target = new URL(action.url);
   } catch {
-    return { type: 'ERROR', error: { code: 'UNKNOWN', message: `잘못된 URL: ${action.url}` } };
+    return {
+      type: 'ERROR',
+      error: { code: 'UNKNOWN', message: t('sw.badUrl', { url: action.url }) },
+    };
   }
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
     return {
       type: 'ERROR',
       error: {
         code: 'ACTION_DENIED',
-        message: `허용되지 않는 스킴입니다: ${target.protocol}`,
-        hint: 'http 또는 https만 이동할 수 있습니다.',
+        message: t('sw.badScheme', { scheme: target.protocol }),
+        hint: t('sw.badSchemeHint'),
       },
     };
   }

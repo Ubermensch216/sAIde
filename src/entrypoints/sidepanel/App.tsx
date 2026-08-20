@@ -722,9 +722,7 @@ function EmptyState({
         />
       ) : (
         tab && (
-          <div className="pageactions-hint restricted">
-            이 페이지에서는 내용을 읽을 수 없습니다. 일반 웹페이지에서 다시 시도하세요.
-          </div>
+          <div className="pageactions-hint restricted">{t('panel.restrictedHint')}</div>
         )
       )}
 

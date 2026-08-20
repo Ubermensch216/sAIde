@@ -153,6 +153,145 @@ const ko = {
   'composer.commands': '명령 목록',
   'composer.needsPage': '페이지',
   'composer.needsScreen': '화면',
+
+  /* ── 설정 화면 (options) ── */
+  'sw.extractFailed': '페이지 내용을 가져오지 못했습니다.',
+  'sw.actionFailed': '동작을 수행하지 못했습니다.',
+  'sw.badUrl': '이동할 수 없는 주소입니다: {url}',
+  'sw.badScheme': '허용되지 않는 주소 형식입니다: {scheme}',
+  'sw.badSchemeHint': 'http 또는 https 주소로만 이동할 수 있습니다.',
+
+  'panel.restrictedHint':
+    '이 페이지에서는 내용을 읽을 수 없습니다. 일반 웹페이지에서 다시 시도하세요.',
+
+  'opt.title': '설정',
+
+  'opt.conn.h': '연결',
+  'opt.conn.endpoint': 'Ollama 엔드포인트',
+  'opt.conn.endpointDesc': '이 컴퓨터의 Ollama 주소입니다. 외부로는 어떤 요청도 나가지 않습니다.',
+  'opt.conn.model': '모델',
+  'opt.conn.check': '연결 확인',
+  'opt.conn.failed': '연결 실패',
+  'opt.conn.ok': 'Ollama {version} · 모델 {count}개',
+  'opt.conn.resident': ' · 상주 중 ({processor})',
+  'opt.conn.embed': '임베딩 모델',
+  'opt.conn.embedDesc': '기억·검색 기능에서만 사용합니다. bge-m3는 한국어 검색 품질이 좋습니다.',
+
+  'opt.perf.h': '성능',
+  'opt.perf.think': '추론 과정(thinking)',
+  'opt.perf.think.off': '끄기 — 가장 빠름',
+  'opt.perf.think.agent': '에이전트에서만 (권장)',
+  'opt.perf.think.always': '항상 켜기',
+  'opt.perf.thinkDesc':
+    '모델이 답하기 전에 생각을 적는 기능입니다. 정확도가 오르지만 이 컴퓨터에서는 응답이 **약 6배 느려집니다**. 툴을 쓰는 작업에서만 켜는 편이 좋습니다.',
+  'opt.perf.budget': '페이지 본문 분량',
+  'opt.perf.budgetVal': '{n} 토큰',
+  'opt.perf.budgetCost': '한국어 약 {chars}자 · 답변 시작까지 약 **{sec}초**',
+  'opt.perf.budgetTooLong': ' — 실사용에는 너무 깁니다',
+  'opt.perf.budgetDesc': '이 분량을 넘는 페이지는 앞부분만 읽고, 그 사실을 화면에 알립니다.',
+  'opt.perf.ctx': '컨텍스트 길이 (num_ctx)',
+  'opt.perf.ctxDesc':
+    '대화 전체가 들어갈 수 있는 최대 크기입니다. 꽉 채우면 답변 시작까지 약 {sec}초 걸립니다. 값을 바꾸면 모델이 다시 로드되므로 잠시 느려집니다.',
+  'opt.perf.keep': '모델 유지 시간',
+  'opt.perf.keep.5m': '5분',
+  'opt.perf.keep.10m': '10분 (권장)',
+  'opt.perf.keep.30m': '30분',
+  'opt.perf.keep.forever': '계속 유지',
+  'opt.perf.keepDesc':
+    '길게 잡으면 응답이 빠르지만 메모리를 계속 차지합니다(약 7GB). 16GB 컴퓨터에서는 10분이 적당합니다.',
+  'opt.perf.warm': '패널을 열 때 미리 준비',
+  'opt.perf.warmDesc':
+    '모델을 미리 메모리에 올려 첫 응답을 앞당깁니다. 끄면 첫 질문에서 약 20초를 기다리게 됩니다.',
+  'opt.perf.tempDesc': '낮을수록 일관되고, 높을수록 다양한 답을 냅니다.',
+
+  'opt.agent.h': '에이전트',
+  'opt.agent.enable': '에이전트 모드 사용',
+  'opt.agent.enableDesc':
+    '입력창 옆의 **에이전트** 버튼이 보입니다. 켜면 sAIde가 페이지를 직접 읽고 스크롤하며, 필요하면 클릭·입력·이동을 **제안**합니다.',
+  'opt.agent.approvalDesc':
+    '클릭·입력·주소 이동은 **매번 승인을 거칩니다.** 자동 승인이나 "다시 묻지 않기"는 일부러 만들지 않았습니다 — 페이지에 숨겨진 지시문으로부터 지켜 주는 마지막 장치이기 때문입니다.',
+  'opt.agent.turns': '최대 턴 수',
+  'opt.agent.turnsVal': '{n}턴',
+  'opt.agent.turnsDesc':
+    '한 턴에 약 25초가 걸리므로 최악의 경우 약 **{min}분**까지 돌 수 있습니다. 중간에 언제든 중단할 수 있습니다.',
+  'opt.agent.idle': '무응답 대기 한도',
+  'opt.agent.idleSec': '{n}초',
+  'opt.agent.idleSecRec': '{n}초 (권장)',
+  'opt.agent.idleDesc':
+    '한 턴이 이 시간 동안 아무것도 내놓지 못하면 멈춥니다. 글자가 나오는 동안에는 시간이 다시 초기화되므로, 느리게라도 답하고 있으면 끊기지 않습니다.',
+
+  'opt.access.h': '페이지 접근',
+  'opt.access.intro':
+    'sAIde는 설치할 때 어떤 사이트 권한도 갖지 않습니다. "이 페이지 요약" 같은 기능을 처음 쓸 때 그 사이트에 한해 권한을 요청합니다. 아래에서 한 번에 허용하거나 언제든 회수할 수 있습니다.',
+  'opt.access.all': '모든 사이트에서 허용',
+  'opt.access.allDesc':
+    '켜면 사이트마다 묻지 않습니다. 페이지 내용은 여전히 이 컴퓨터 밖으로 나가지 않습니다.',
+  'opt.access.captureDesc':
+    '**화면 캡처 기능은 이 권한이 반드시 필요합니다.** 크롬이 캡처에 한해 사이트별 권한을 받아주지 않기 때문입니다. 본문 읽기는 사이트별 권한만으로 동작합니다.',
+  'opt.access.granted': '허용된 사이트',
+  'opt.access.count': '{n}곳',
+  'opt.access.none': '아직 없습니다.',
+  'opt.access.revoke': '회수',
+
+  'opt.display.h': '표시',
+  'opt.display.theme': '테마',
+  'opt.display.theme.system': '시스템 설정 따르기',
+  'opt.display.theme.light': '밝게',
+  'opt.display.theme.dark': '어둡게',
+  'opt.display.locale': '언어 · Language',
+  'opt.display.localeDesc':
+    '사이드패널 화면과 모델의 답변 언어가 함께 바뀝니다. 확장 이름과 우클릭 메뉴는 브라우저 언어를 따릅니다.',
+
+  'opt.reset': '기본값으로 되돌리기',
+  'opt.resetDesc':
+    '기본값은 이 컴퓨터에서 실제로 측정한 성능(프리필 {rate} tok/s)에 맞춰 정해져 있습니다.',
+
+  /* ── 성능 대시보드 ── */
+  'perf.h': '성능 기록',
+  'perf.empty':
+    '아직 기록이 없습니다. 대화를 몇 번 나누면 이곳에 실제 응답 속도가 쌓이고, 계획서가 정한 목표와 나란히 비교됩니다.',
+  'perf.intro':
+    '최근 {total}건의 실제 응답에서 잰 값입니다. 콜드 스타트 {cold}건은 목표 대조에서 제외했습니다(모델을 처음 올리는 시간이라 매번 겪는 지연이 아닙니다).',
+  'perf.bucket.short': '짧은 대화',
+  'perf.bucket.selection': '선택 텍스트',
+  'perf.bucket.page': '페이지 작업',
+  'perf.bucket.huge': '대용량',
+  'perf.col.bucket': '작업 구간',
+  'perf.col.count': '건수',
+  'perf.col.median': '첫 토큰(중앙값)',
+  'perf.col.target': '목표',
+  'perf.sec': '{n}초',
+  'perf.miss': ' 초과',
+  'perf.meet': ' 달성',
+  'perf.prefill': '프리필',
+  'perf.decode': '생성',
+  'perf.base': ' 기준 {n}',
+  'perf.tokensIn': '읽은 토큰',
+  'perf.tokensOut': '생성한 토큰',
+  'perf.fasterHw':
+    '프리필이 기준선의 3배를 넘습니다. GPU가 붙은 것으로 보입니다 — 페이지 본문 분량과 컨텍스트 길이를 늘려도 실용 범위에 들어옵니다.',
+  'perf.refresh': '새로고침',
+
+  /* ── 프리셋 편집 ── */
+  'preset.h': '내 프리셋',
+  'preset.intro':
+    '자주 쓰는 프롬프트를 슬래시 커맨드로 등록합니다. 사이드패널 입력창에 / 를 치면 목록이 뜹니다. 본문에 {selection}을 넣으면 커맨드 뒤에 입력한 내용이 그 자리에 들어갑니다.',
+  'preset.needs.none': '첨부 없음',
+  'preset.needs.page': '페이지 본문 필요',
+  'preset.needs.screen': '화면 캡처 필요',
+  'preset.needs.selection': '입력한 텍스트 대상',
+  'preset.delete': '삭제',
+  'preset.label': '이름',
+  'preset.labelPlaceholder': '예: 회의록 정리',
+  'preset.slash': '명령어',
+  'preset.conflict': ' — 같은 이름이 있습니다. 저장하면 덮어씁니다.',
+  'preset.willSave': ' 로 저장됩니다.',
+  'preset.needs': '필요한 첨부',
+  'preset.needsDesc':
+    "'페이지 본문 필요'를 고르면 명령 실행 시 본문을 먼저 읽습니다(약 15초). '화면 캡처'는 약 5초로 더 빠릅니다.",
+  'preset.body': '본문',
+  'preset.bodyPlaceholder': '다음 회의록에서 결정 사항과 할 일만 뽑아줘.\n\n{selection}',
+  'preset.add': '추가',
 } as const;
 
 export type MessageKey = keyof typeof ko;
@@ -289,6 +428,146 @@ const en = {
   'composer.commands': 'Command list',
   'composer.needsPage': 'page',
   'composer.needsScreen': 'screen',
+
+  /* ── Settings screen ── */
+  'sw.extractFailed': 'Could not read the page content.',
+  'sw.actionFailed': 'Could not carry out the action.',
+  'sw.badUrl': 'That address cannot be opened: {url}',
+  'sw.badScheme': 'That address type is not allowed: {scheme}',
+  'sw.badSchemeHint': 'Only http and https addresses can be opened.',
+
+  'panel.restrictedHint':
+    'This page cannot be read. Try again on a regular web page.',
+
+  'opt.title': 'Settings',
+
+  'opt.conn.h': 'Connection',
+  'opt.conn.endpoint': 'Ollama endpoint',
+  'opt.conn.endpointDesc': 'Your local Ollama address. No request ever leaves this computer.',
+  'opt.conn.model': 'Model',
+  'opt.conn.check': 'Check connection',
+  'opt.conn.failed': 'Connection failed',
+  'opt.conn.ok': 'Ollama {version} · {count} models',
+  'opt.conn.resident': ' · resident ({processor})',
+  'opt.conn.embed': 'Embedding model',
+  'opt.conn.embedDesc': 'Used only for memory and search. bge-m3 handles Korean queries well.',
+
+  'opt.perf.h': 'Performance',
+  'opt.perf.think': 'Reasoning (thinking)',
+  'opt.perf.think.off': 'Off — fastest',
+  'opt.perf.think.agent': 'Agent only (recommended)',
+  'opt.perf.think.always': 'Always on',
+  'opt.perf.thinkDesc':
+    'Lets the model write out its reasoning first. Accuracy improves, but on this computer replies get **about 6x slower**. Best kept for tool-using work.',
+  'opt.perf.budget': 'Page text budget',
+  'opt.perf.budgetVal': '{n} tokens',
+  'opt.perf.budgetCost': 'about {chars} characters · first token in about **{sec}s**',
+  'opt.perf.budgetTooLong': ' — too long to be practical',
+  'opt.perf.budgetDesc': 'Pages longer than this are read from the top only, and the panel says so.',
+  'opt.perf.ctx': 'Context length (num_ctx)',
+  'opt.perf.ctxDesc':
+    'The most that can fit in one conversation. Filling it costs about {sec}s before the first token. Changing this reloads the model, so it will be slow for a moment.',
+  'opt.perf.keep': 'Keep model loaded',
+  'opt.perf.keep.5m': '5 minutes',
+  'opt.perf.keep.10m': '10 minutes (recommended)',
+  'opt.perf.keep.30m': '30 minutes',
+  'opt.perf.keep.forever': 'Indefinitely',
+  'opt.perf.keepDesc':
+    'Longer means faster replies but the model holds about 7GB of memory. On a 16GB machine, 10 minutes is a good balance.',
+  'opt.perf.warm': 'Warm up when the panel opens',
+  'opt.perf.warmDesc':
+    'Loads the model ahead of time so the first reply starts sooner. With this off, expect about 20s on your first question.',
+  'opt.perf.tempDesc': 'Lower is more consistent; higher is more varied.',
+
+  'opt.agent.h': 'Agent',
+  'opt.agent.enable': 'Enable agent mode',
+  'opt.agent.enableDesc':
+    'Shows the **Agent** button next to the composer. sAIde will read and scroll the page itself, and **propose** clicks, typing, and navigation when needed.',
+  'opt.agent.approvalDesc':
+    'Clicks, typing, and navigation **always go through approval.** There is deliberately no auto-approve and no "do not ask again" — this is the last thing standing between you and instructions hidden in a page.',
+  'opt.agent.turns': 'Maximum turns',
+  'opt.agent.turnsVal': '{n} turns',
+  'opt.agent.turnsDesc':
+    'At about 25s per turn, the worst case runs for about **{min} minutes**. You can stop it at any point.',
+  'opt.agent.idle': 'Silence before giving up',
+  'opt.agent.idleSec': '{n}s',
+  'opt.agent.idleSecRec': '{n}s (recommended)',
+  'opt.agent.idleDesc':
+    'A turn stops if it produces nothing for this long. The clock resets while text is arriving, so a slow answer is never cut off.',
+
+  'opt.access.h': 'Page access',
+  'opt.access.intro':
+    'sAIde installs with no site access at all. The first time you use something like "Summarize this page", it asks for that one site. You can grant everything at once below, or revoke any of it at any time.',
+  'opt.access.all': 'Allow on all sites',
+  'opt.access.allDesc':
+    'Stops the per-site prompts. Page content still never leaves this computer.',
+  'opt.access.captureDesc':
+    '**Screen capture requires this permission.** Chrome will not grant capture on a per-site basis. Reading page text works with per-site access alone.',
+  'opt.access.granted': 'Allowed sites',
+  'opt.access.count': '{n}',
+  'opt.access.none': 'None yet.',
+  'opt.access.revoke': 'Revoke',
+
+  'opt.display.h': 'Display',
+  'opt.display.theme': 'Theme',
+  'opt.display.theme.system': 'Follow system',
+  'opt.display.theme.light': 'Light',
+  'opt.display.theme.dark': 'Dark',
+  'opt.display.locale': 'Language · 언어',
+  'opt.display.localeDesc':
+    "Changes both the panel's interface and the language the model replies in. The extension name and right-click menu follow your browser language.",
+
+  'opt.reset': 'Restore defaults',
+  'opt.resetDesc':
+    'Defaults are tuned to performance actually measured on this computer (prefill {rate} tok/s).',
+
+  /* ── Performance dashboard ── */
+  'perf.h': 'Performance record',
+  'perf.empty':
+    'Nothing recorded yet. After a few conversations, real response times collect here alongside the targets set in the plan.',
+  'perf.intro':
+    'Measured across the last {total} real responses. {cold} cold starts are excluded from the comparison — that is the one-time cost of loading the model, not a delay you meet every time.',
+  'perf.bucket.short': 'Short chat',
+  'perf.bucket.selection': 'Selected text',
+  'perf.bucket.page': 'Page task',
+  'perf.bucket.huge': 'Large input',
+  'perf.col.bucket': 'Task',
+  'perf.col.count': 'Samples',
+  'perf.col.median': 'First token (median)',
+  'perf.col.target': 'Target',
+  'perf.sec': '{n}s',
+  'perf.miss': ' over',
+  'perf.meet': ' met',
+  'perf.prefill': 'Prefill',
+  'perf.decode': 'Generation',
+  'perf.base': ' baseline {n}',
+  'perf.tokensIn': 'Tokens read',
+  'perf.tokensOut': 'Tokens written',
+  'perf.fasterHw':
+    'Prefill is more than 3x the baseline — this looks like a GPU. You can raise the page budget and context length and stay in practical range.',
+  'perf.refresh': 'Refresh',
+
+  /* ── Preset editor ── */
+  'preset.h': 'My presets',
+  'preset.intro':
+    'Register prompts you use often as slash commands. Type / in the panel composer to see the list. Put {selection} in the body and whatever you type after the command lands there.',
+  'preset.needs.none': 'No attachment',
+  'preset.needs.page': 'Needs page text',
+  'preset.needs.screen': 'Needs screenshot',
+  'preset.needs.selection': 'Acts on typed text',
+  'preset.delete': 'Delete',
+  'preset.label': 'Name',
+  'preset.labelPlaceholder': 'e.g. Tidy meeting notes',
+  'preset.slash': 'Command',
+  'preset.conflict': ' — that name exists. Saving overwrites it.',
+  'preset.willSave': ' will be saved.',
+  'preset.needs': 'Required attachment',
+  'preset.needsDesc':
+    "Choosing 'Needs page text' reads the page first when the command runs (about 15s). 'Needs screenshot' is faster, about 5s.",
+  'preset.body': 'Body',
+  'preset.bodyPlaceholder':
+    'Pull only the decisions and action items out of these notes.\n\n{selection}',
+  'preset.add': 'Add',
 } satisfies Record<MessageKey, string>;
 
 export const MESSAGES = { ko, en } as const;

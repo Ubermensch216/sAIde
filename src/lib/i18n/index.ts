@@ -13,6 +13,7 @@
  *   화면에 키 이름이 그대로 노출되는 형태로 드러나므로 타입으로 막는 편이 낫다.
  */
 
+import { createElement, Fragment, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { MESSAGES, type MessageKey } from './catalog';
 
@@ -79,4 +80,30 @@ export function t(key: MessageKey, vars?: Vars): string {
 export function useT(): (key: MessageKey, vars?: Vars) => string {
   const locale = useLocaleStore((s) => s.locale);
   return (key, vars) => translate(locale, key, vars);
+}
+
+/**
+ * `**강조**`를 `<strong>`으로 바꿔 준다.
+ *
+ * ★ 카탈로그를 평문으로 유지하기 위한 장치다. 설정 화면에는 "약 6배
+ *   느려집니다" 같은 강조가 문장 한가운데 박혀 있는데, 그때마다 문장을
+ *   앞·강조·뒤 세 키로 쪼개면 번역자가 문장을 볼 수 없게 된다. 어순이
+ *   다른 언어에서는 그 조각들이 아예 맞지 않는다.
+ */
+export function rich(text: string): ReactNode {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  if (parts.length === 1) return text;
+  return createElement(
+    Fragment,
+    null,
+    ...parts.map((part, i) =>
+      i % 2 === 1 ? createElement('strong', { key: i }, part) : part,
+    ),
+  );
+}
+
+/** `useT`의 강조 지원판. 반환값이 문자열이 아니라 노드다. */
+export function useRichT(): (key: MessageKey, vars?: Vars) => ReactNode {
+  const locale = useLocaleStore((s) => s.locale);
+  return (key, vars) => rich(translate(locale, key, vars));
 }

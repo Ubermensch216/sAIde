@@ -22,18 +22,21 @@ export type Bucket = 'short' | 'selection' | 'page' | 'huge';
 
 export interface BucketSpec {
   id: Bucket;
-  label: string;
   /** 이 구간에 들어오는 프롬프트 토큰 상한(미만) */
   maxTokens: number;
   /** §6이 정한 첫 토큰 목표(초). 콜드 스타트는 제외한 값이다. */
   targetTtfbSec: number;
 }
 
+/**
+ * ★ 표시 이름은 여기 두지 않는다. 화면에 보일 문자열은 로케일을 타므로
+ *   `id`로 카탈로그(`perf.bucket.*`)를 찾아 쓴다. 이 모듈은 순수 계산이다.
+ */
 export const BUCKETS: BucketSpec[] = [
-  { id: 'short', label: '짧은 대화', maxTokens: 300, targetTtfbSec: 2 },
-  { id: 'selection', label: '선택 텍스트', maxTokens: 800, targetTtfbSec: 8 },
-  { id: 'page', label: '페이지 작업', maxTokens: 3000, targetTtfbSec: 20 },
-  { id: 'huge', label: '대용량', maxTokens: Number.POSITIVE_INFINITY, targetTtfbSec: 60 },
+  { id: 'short', maxTokens: 300, targetTtfbSec: 2 },
+  { id: 'selection', maxTokens: 800, targetTtfbSec: 8 },
+  { id: 'page', maxTokens: 3000, targetTtfbSec: 20 },
+  { id: 'huge', maxTokens: Number.POSITIVE_INFINITY, targetTtfbSec: 60 },
 ];
 
 export function bucketOf(promptTokens: number): Bucket {
@@ -42,7 +45,6 @@ export function bucketOf(promptTokens: number): Bucket {
 
 export interface BucketStat {
   id: Bucket;
-  label: string;
   count: number;
   /** 중앙값 TTFB(초). 콜드 스타트 표본은 뺀 값이다. */
   medianTtfbSec: number;
@@ -80,7 +82,6 @@ export function summarize(samples: PerfSample[]): PerfSummary {
     const med = median(inBucket.map((s) => s.ttfbMs / 1000));
     return {
       id: spec.id,
-      label: spec.label,
       count: inBucket.length,
       medianTtfbSec: round1(med),
       targetTtfbSec: spec.targetTtfbSec,
