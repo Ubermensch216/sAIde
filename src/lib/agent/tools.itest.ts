@@ -14,9 +14,19 @@
  *      것은 AGENT_GUIDE 3번이 시킨 **올바른** 순서다. 그래서 루프를 실제로 돌리고
  *      **여러 턴 안에 의도한 도구에 도달했는가**로 채점한다.
  *
- * ★ thinking은 기본으로 끈다. 실사용 경로는 think:true지만(계획서 Phase 5)
- *   80건을 thinking으로 돌리면 30분을 넘겨 게이트로 쓰기 어렵다. 프로덕션과
- *   동일 조건으로 재려면 `SAIDE_AGENT_THINK=1 npm run test:live`로 실행한다.
+ *   ③ thinking을 껐다 → 이것이 **가장 컸다.** (2026-08-20)
+ *      한때 비용 때문에 `think:false`를 기본으로 뒀는데, 그 조건에서 click과
+ *      type_text는 2/10이었다. 켜면 둘 다 9/10이다. 프롬프트를 여섯 번 고쳐
+ *      2/10을 3/10으로 미는 동안, 원인은 프롬프트가 아니라 측정 조건이었다.
+ *
+ *      끈 상태에서 모델은 도구를 잘못 고르는 게 아니라 **아예 부르지 않는다** —
+ *      "어떤 로그인 버튼을 말씀하시는지 알려주세요"라고 되묻는다. 지침에
+ *      "되묻지 않는다"를 못박아도 바뀌지 않았다.
+ *
+ *      그래서 기본을 **프로덕션과 같은 `think:true`로 둔다.** 대가는 시간이다 —
+ *      80건에 약 30분이다. 게이트는 실제로 나가는 조건을 재야 의미가 있고,
+ *      빠른 반복은 `SAIDE_TOOLS=`로 도구를 좁혀서 한다.
+ *      끄고 재려면 `SAIDE_AGENT_THINK=0 npm run test:live`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -29,7 +39,8 @@ import { AGENT_TOOLS, type AgentAction, type ToolName } from './tools';
 
 const EP = 'http://localhost:11434';
 const MODEL = 'gemma4:e2b';
-const THINK = process.env.SAIDE_AGENT_THINK === '1';
+/** 실사용 경로와 같게 켜는 것이 기본이다. 머리말 ③ 참조. */
+const THINK = process.env.SAIDE_AGENT_THINK !== '0';
 const NUM_CTX = 4096;
 
 /**
@@ -41,6 +52,15 @@ const ONLY = (process.env.SAIDE_TOOLS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+/**
+ * 페이지 본문을 미리 붙이고 잰다. `SAIDE_PAGE=1 npm run test:live`
+ *
+ * 기본값(끔)은 "탭 제목과 주소만 아는" 상태다 — 에이전트 모드의 최소 조건이다.
+ * 켜면 사용자가 페이지를 첨부한 실사용 경로가 된다. 두 수치의 차이가 곧
+ * "모델이 못 고르는 것인가, 근거가 없어 안 고르는 것인가"의 답이다.
+ */
+const WITH_PAGE = process.env.SAIDE_PAGE === '1';
 
 /** 계획서 5-5의 합격선. */
 const PASS_RATE = 0.8;
@@ -181,7 +201,7 @@ async function runScenario(prompt: string, maxTurns: number) {
   const seed = buildContext(
     [{ role: 'user', content: prompt }],
     NUM_CTX,
-    null,
+    WITH_PAGE ? { text: PAGE_TEXT, title: TAB.title, url: TAB.url } : null,
     buildAgentSystem(TAB),
   );
 
@@ -318,7 +338,10 @@ describe('에이전트 툴 (실서버)', () => {
 
       console.log(`\n  도달률 ${hits.length}/${rows.length} = ${(rate * 100).toFixed(1)}%`);
       console.log(`  첫 턴 정확도 ${(firstRate * 100).toFixed(1)}%`);
-      console.log(`  시나리오당 평균 ${(avgMs / 1000).toFixed(1)}초 · thinking ${THINK ? 'ON' : 'OFF'}`);
+          console.log(
+        `  시나리오당 평균 ${(avgMs / 1000).toFixed(1)}초 · thinking ${THINK ? 'ON' : 'OFF'}` +
+          ` · 페이지 첨부 ${WITH_PAGE ? 'ON' : 'OFF'}`,
+      );
       console.log('\n  실패한 시나리오:');
       for (const r of rows.filter((x) => !x.hit)) {
         console.log(`   ${r.want} → [${r.used.join(', ') || '도구 없음'}] : ${r.prompt}`);

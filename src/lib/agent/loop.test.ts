@@ -357,3 +357,39 @@ describe('실행 액션 전달', () => {
     expect(seenActions).toEqual([{ kind: 'scroll', direction: 'down', amount: 300 }]);
   });
 });
+
+/**
+ * 본문에 흘린 호출 되살리기. 파서 자체는 tools.test.ts가 잡고, 여기서는
+ * **루프가 그것을 승인 게이트에 태우는지**를 고정한다 — 되살렸다고 해서
+ * 승인 없이 실행되면 §7의 마지막 방어선이 뚫린다.
+ */
+describe('본문에 흘린 호출 복구', () => {
+  it('도구 호출이 0건이어도 본문의 호출문을 실행한다', async () => {
+    const { fn } = scriptedChat([
+      turn('scroll(direction="down")'),
+      turn('내렸습니다'),
+    ]);
+    const out = await runAgentLoop(seed, deps({ chat: fn }));
+
+    expect(out.steps.map((s) => s.tool)).toEqual(['scroll']);
+    expect(out.content).toBe('내렸습니다');
+  });
+
+  it('되살린 호출도 승인 없이는 실행되지 않는다', async () => {
+    const execute = vi.fn(async (): Promise<ToolOutcome> => ({ ok: true, detail: '' }));
+    const { fn } = scriptedChat([turn('click(selector="#buy")'), turn('멈췄습니다')]);
+    const out = await runAgentLoop(
+      seed,
+      deps({ chat: fn, execute, approve: async () => false }),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(out.steps[0]!.approved).toBe(false);
+  });
+
+  it('호출문은 답변으로 남기지 않는다 — 사용자에게 보일 문장이 아니다', async () => {
+    const { fn } = scriptedChat([turn('read_page()'), turn('요약입니다')]);
+    const out = await runAgentLoop(seed, deps({ chat: fn }));
+    expect(out.content).not.toContain('read_page()');
+  });
+});

@@ -141,7 +141,10 @@ export const AGENT_TOOLS: ToolSchema[] = [
       parameters: {
         type: 'object',
         properties: {
-          selector: { type: 'string', description: '입력칸의 CSS 선택자 또는 안내 문구' },
+          selector: {
+            type: 'string',
+            description: 'CSS 선택자. 모르면 입력칸을 가리키는 말을 그대로 써도 된다. 예: "검색창"',
+          },
           text: { type: 'string', description: '입력할 내용' },
         },
         required: ['selector', 'text'],
