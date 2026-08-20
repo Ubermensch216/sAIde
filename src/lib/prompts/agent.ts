@@ -6,14 +6,28 @@
  *   턴마다 "지금 3번째 턴이다" 같은 동적 문구를 넣고 싶어지지만, 그 대가가
  *   매 턴 전액 재프리필이다. 넣지 않는다.
  *
- * ★ 배치도 캐시 때문에 정해져 있다.
- *     [0] SYSTEM_PROMPT   — 일반 대화와 **동일한** 상수
- *     [1] 페이지 본문     — 붙어 있으면
+ * ★ 에이전트 지침은 **시스템 메시지 하나에 합쳐서** 넣는다. (2026-08-19 실측)
+ *
+ *   처음에는 캐시를 아끼려고 `[시스템][페이지][확인][에이전트 지침]`처럼 지침을
+ *   두 번째 시스템 메시지로 분리했다. 그런데 `gemma4:e2b`는 **시스템 메시지가
+ *   둘이면 도구를 제대로 부르지 않는다.** 같은 문구를 한 덩어리로 합치기만 해도
+ *   결과가 이렇게 갈렸다(시나리오 5종, think:false):
+ *
+ *     시스템 2개      navigate 실패 · scroll 실패      3/5
+ *     시스템 1개(합침) 전부 성공                        5/5
+ *
+ *   캐시보다 동작이 먼저다. 대신 손해는 크지 않다 — 에이전트 모드에서는 보통
+ *   페이지 본문을 붙이지 않고(모델이 read_page로 직접 가져온다) 고정 블록이
+ *   시스템 메시지 하나뿐이라, 탭이 바뀌어 재프리필해도 약 450토큰(3초)이다.
+ *
+ *   최종 배치:
+ *     [0] SYSTEM_PROMPT + AGENT_GUIDE + 현재 탭 안내
+ *     [1] 페이지 본문 (붙어 있으면)
  *     [2] 확인 응답
- *     [3] AGENT_GUIDE     — 여기. 고정 블록 뒤이므로 일반 대화 ↔ 에이전트를
- *                           오가도 가장 비싼 앞부분(본문)은 캐시가 살아남는다
- *     [4…] 대화 턴 · 툴 호출 · 툴 결과
+ *     [3…] 대화 턴 · 툴 호출 · 툴 결과
  */
+
+import { SYSTEM_PROMPT } from './system';
 
 /** 에이전트 모드에서만 추가로 붙는 지침. 절대 동적으로 조립하지 않는다. */
 export const AGENT_GUIDE = `너는 지금 브라우저를 직접 다룰 수 있다. 규칙은 다음과 같다.
@@ -54,9 +68,16 @@ export function currentTabNote(title: string, url: string): string {
 이 탭을 대상으로 도구를 쓴다.`;
 }
 
-/** 에이전트 지침 + 현재 탭 안내를 한 블록으로 만든다. 삽입 지점은 한 곳뿐이다. */
-export function buildAgentGuide(tab?: { title: string; url: string }): string {
-  return tab ? `${AGENT_GUIDE}\n\n${currentTabNote(tab.title, tab.url)}` : AGENT_GUIDE;
+/**
+ * 에이전트 모드의 시스템 프롬프트 전체.
+ *
+ * ★ 반드시 이 하나만 시스템 메시지로 넣는다. 나눠 넣으면 도구 호출이 깨진다
+ *   (머리말의 실측 참조).
+ */
+export function buildAgentSystem(tab?: { title: string; url: string }): string {
+  const parts = [SYSTEM_PROMPT, AGENT_GUIDE];
+  if (tab) parts.push(currentTabNote(tab.title, tab.url));
+  return parts.join('\n\n');
 }
 
 /**

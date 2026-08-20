@@ -22,7 +22,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildContext } from '@/lib/chat/context';
 import { streamChat } from '@/lib/ollama/stream';
-import { buildAgentGuide } from '@/lib/prompts/agent';
+import { buildAgentSystem } from '@/lib/prompts/agent';
 import type { ToolCall } from '@/types/ollama';
 import { runAgentLoop, type ToolOutcome, type TurnResult } from './loop';
 import { AGENT_TOOLS, type AgentAction, type ToolName } from './tools';
@@ -172,8 +172,7 @@ async function runScenario(prompt: string, maxTurns: number) {
     [{ role: 'user', content: prompt }],
     NUM_CTX,
     null,
-    undefined,
-    buildAgentGuide(TAB),
+    buildAgentSystem(TAB),
   );
 
   const t0 = Date.now();
@@ -237,8 +236,7 @@ describe('에이전트 툴 (실서버)', () => {
           [{ role: 'user', content: '이 페이지 내용을 읽어줘' }],
           NUM_CTX,
           null,
-          undefined,
-          buildAgentGuide(TAB),
+          buildAgentSystem(TAB),
         ),
         stream: true,
         think: false,

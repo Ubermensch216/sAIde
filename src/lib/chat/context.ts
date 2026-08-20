@@ -118,15 +118,14 @@ export function buildContext(
   messages: ContextInput[],
   numCtx: number,
   attachment?: Attachment | AttachedPage | null,
-  systemPrompt: string = SYSTEM_PROMPT,
   /**
-   * 에이전트 지침(AGENT_GUIDE). 고정 블록 **뒤에** 들어간다.
+   * 시스템 프롬프트. 기본은 일반 대화용 상수다.
    *
-   * ★ 앞이 아니라 뒤인 이유는 캐시다. 시스템 프롬프트를 갈아끼우면 페이지
-   *   본문까지 접두사가 통째로 무효화되지만(프리필 전액 재지불), 본문 뒤에
-   *   끼우면 일반 대화 ↔ 에이전트를 오가도 가장 비싼 앞부분은 살아남는다.
+   * ★ 에이전트 모드는 지침과 탭 안내까지 합친 **하나의** 문자열을 넘긴다.
+   *   시스템 메시지를 둘로 나누면 gemma4:e2b가 도구를 부르지 않는다 —
+   *   실측 근거는 prompts/agent.ts 머리말.
    */
-  extraSystem?: string,
+  systemPrompt: string = SYSTEM_PROMPT,
 ): ChatMessage[] {
   const att = normalizeAttachment(attachment);
   const ctx: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
@@ -142,12 +141,7 @@ export function buildContext(
     ctx.push(msg);
     ctx.push({ role: 'assistant', content: PAGE_ACK });
   }
-  let pinnedCount = att.page || att.screenshot ? 3 : 1;
-
-  if (extraSystem) {
-    ctx.push({ role: 'system', content: extraSystem });
-    pinnedCount += 1; // 지침이 밀려나면 에이전트가 규칙을 잊는다. 반드시 고정한다.
-  }
+  const pinnedCount = att.page || att.screenshot ? 3 : 1;
 
   for (const m of messages) {
     if (m.streaming) continue;

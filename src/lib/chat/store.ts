@@ -35,7 +35,7 @@ import type { Settings } from '@/lib/storage/settings';
 import { AGENT_TOOLS } from '@/lib/agent/tools';
 import { createExecutor, createTargetDescriber } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
-import { buildAgentGuide } from '@/lib/prompts/agent';
+import { buildAgentSystem } from '@/lib/prompts/agent';
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
 export interface AgentTab {
@@ -585,16 +585,14 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   const startedAt = Date.now();
   const { page, screenshot, stale } = freshAttachment(set, get);
 
-  // ★ AGENT_GUIDE는 고정 블록 **뒤**에 들어간다. 앞을 건드리면 페이지 본문의
-  //   KV 캐시가 통째로 날아간다(context.ts extraSystem 주석 참조).
+  // ★ 시스템 프롬프트 · 에이전트 지침 · 현재 탭 안내를 **하나로 합쳐** 넣는다.
+  //   나눠 넣으면 도구 호출이 깨지고, 탭을 알려주지 않으면 "어떤 페이지요?"라고
+  //   되묻고 끝난다. 둘 다 실측 근거는 prompts/agent.ts 머리말.
   const context = buildContext(
     get().messages,
     settings.numCtx,
     toAttachment(page, screenshot),
-    undefined,
-    // ★ 현재 탭을 알려주지 않으면 에이전트가 "어떤 페이지요?"라고 되묻고 끝난다.
-    //   실측 근거는 prompts/agent.ts currentTabNote 주석 참조.
-    buildAgentGuide(tab),
+    buildAgentSystem(tab),
   );
 
   const placeholder: UiMessage = {
