@@ -20,6 +20,7 @@ import {
   youTubeMeta,
 } from '@/lib/extract/youtube';
 import type {
+  ActionResult,
   ContentToSW,
   ExtractedPage,
   ExtractMethod,
@@ -50,8 +51,10 @@ export default defineUnlistedScript(() => {
             payload: await extractPage(msg.budgetTokens),
           } satisfies ContentToSW);
         } else if (msg.type === 'ACT') {
-          const { ok, detail } = await performAction(msg.action);
-          sendResponse({ type: 'ACTED', ok, detail } satisfies ContentToSW);
+          sendResponse({
+            type: 'ACTED',
+            result: await performAction(msg.action),
+          } satisfies ContentToSW);
         }
       } catch (e) {
         sendResponse({
@@ -115,18 +118,22 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
 
 /* ── 액션 (Phase 5) ────────────────────────────────────── */
 
-async function performAction(action: PageAction): Promise<{ ok: boolean; detail: string }> {
+/**
+ * ★ 여기서는 문장을 만들지 않는다. 무슨 일이 있었는지(code)와 그에 딸린
+ *   값(vars)만 돌려준다. 문구는 패널이 로케일에 맞춰 만든다.
+ */
+async function performAction(action: PageAction): Promise<ActionResult> {
   switch (action.kind) {
     case 'read_page': {
       const p = await extractPage(2000);
-      return { ok: true, detail: p.text };
+      return { ok: true, code: 'read', text: p.text };
     }
 
     case 'find_element': {
       const el = findByText(action.query);
       return el
-        ? { ok: true, detail: `찾음: ${describe(el)}` }
-        : { ok: false, detail: `'${action.query}'에 해당하는 요소를 찾지 못했습니다.` };
+        ? { ok: true, code: 'found', vars: { target: describe(el) } }
+        : { ok: false, code: 'notFound', vars: { query: action.query } };
     }
 
     /**
@@ -136,8 +143,8 @@ async function performAction(action: PageAction): Promise<{ ok: boolean; detail:
     case 'describe_target': {
       const el = resolveTarget(action.selector);
       return el
-        ? { ok: true, detail: describe(el) }
-        : { ok: false, detail: `선택자에 맞는 요소가 없습니다: ${action.selector}` };
+        ? { ok: true, code: 'described', vars: { target: describe(el) } }
+        : { ok: false, code: 'noElement', vars: { selector: action.selector } };
     }
 
     case 'scroll': {
@@ -150,25 +157,22 @@ async function performAction(action: PageAction): Promise<{ ok: boolean; detail:
           top: action.direction === 'down' ? amount : -amount,
           behavior: 'smooth',
         });
-      return { ok: true, detail: `${action.direction} 방향으로 스크롤했습니다.` };
+      return { ok: true, code: 'scrolled', vars: { direction: action.direction } };
     }
 
     case 'click': {
       const el = resolveTarget(action.selector);
-      if (!el) return { ok: false, detail: `선택자에 맞는 요소가 없습니다: ${action.selector}` };
+      if (!el) return { ok: false, code: 'noElement', vars: { selector: action.selector } };
       el.click();
-      return { ok: true, detail: `클릭했습니다: ${describe(el)}` };
+      return { ok: true, code: 'clicked', vars: { target: describe(el) } };
     }
 
     case 'type_text': {
       const found = resolveTarget(action.selector);
-      if (!found) return { ok: false, detail: `입력 요소가 없습니다: ${action.selector}` };
+      if (!found) return { ok: false, code: 'noElement', vars: { selector: action.selector } };
       if (!isTextInput(found)) {
         // 어디에 썼는지 모르는 상태로 성공을 보고하지 않는다.
-        return {
-          ok: false,
-          detail: `${describe(found)} 는 글자를 넣을 수 있는 요소가 아닙니다.`,
-        };
+        return { ok: false, code: 'notTextInput', vars: { target: describe(found) } };
       }
       const el = found;
       el.focus();
@@ -176,12 +180,12 @@ async function performAction(action: PageAction): Promise<{ ok: boolean; detail:
       // React 등 프레임워크가 상태를 갱신하도록 실제 이벤트를 발생시킨다.
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true, detail: `입력했습니다: ${describe(el)}` };
+      return { ok: true, code: 'typed', vars: { target: describe(el) } };
     }
 
     case 'navigate':
       // background에서 처리한다. 여기 오면 라우팅 버그다.
-      return { ok: false, detail: 'navigate는 주입 스크립트에서 처리하지 않습니다.' };
+      return { ok: false, code: 'wrongRoute' };
   }
 }
 

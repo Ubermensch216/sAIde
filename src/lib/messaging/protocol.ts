@@ -98,6 +98,40 @@ export interface ApprovalRequest {
   pageTitle: string;
 }
 
+/**
+ * 액션 결과. **문구가 아니라 코드다.**
+ *
+ * ★ 주입 스크립트는 페이지 컨텍스트에서 돌아 설정 저장소에 닿지 않는다.
+ *   거기서 한국어 문장을 만들면 영어 사용자에게 한국어가 그대로 남는다.
+ *   로케일을 페이지로 내려보내는 방법도 있지만, 그러면 카탈로그 전체가
+ *   모든 페이지 주입에 실린다. 그래서 반대로 한다 — 주입 스크립트는 무슨
+ *   일이 있었는지만 알리고, i18n이 있는 패널이 문구를 만든다.
+ *
+ * ★ 이 결과는 화면(실행 단계 목록)과 모델(툴 결과) 양쪽으로 간다.
+ *   둘 다 사용자의 로케일을 따라야 하므로 번역 지점은 패널 하나면 된다.
+ */
+export type ActionResultCode =
+  | 'read'
+  | 'found'
+  | 'described'
+  | 'scrolled'
+  | 'clicked'
+  | 'typed'
+  | 'navigated'
+  | 'notFound'
+  | 'noElement'
+  | 'notTextInput'
+  | 'wrongRoute';
+
+export interface ActionResult {
+  ok: boolean;
+  code: ActionResultCode;
+  /** 문구에 끼워 넣을 값(요소 설명·선택자·방향 등). 페이지에서 온 텍스트다. */
+  vars?: Record<string, string>;
+  /** read_page 본문. 이것만은 문구가 아니라 데이터라 그대로 싣는다. */
+  text?: string;
+}
+
 /* ── Panel → Service Worker ────────────────────────────── */
 
 export type PanelToSW =
@@ -119,7 +153,7 @@ export interface TabSummary {
 export type SWToPanel =
   | { type: 'PAGE_EXTRACTED'; payload: ExtractedPage }
   | { type: 'SCREENSHOT'; dataUrl: string }
-  | { type: 'ACTION_RESULT'; ok: boolean; detail: string }
+  | { type: 'ACTION_RESULT'; result: ActionResult }
   | { type: 'TABS'; tabs: TabSummary[] }
   | { type: 'ACTIVE_TAB'; tab: TabSummary | null }
   | { type: 'TAB_CHANGED'; tab: TabSummary }
@@ -134,7 +168,7 @@ export type SWToContent =
 
 export type ContentToSW =
   | { type: 'EXTRACTED'; payload: ExtractedPage }
-  | { type: 'ACTED'; ok: boolean; detail: string }
+  | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 
 /* ── 타입 안전한 sendMessage 헬퍼 ──────────────────────── */

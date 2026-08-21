@@ -10,8 +10,9 @@
  *   버튼 핸들러에서 미리 확보하고, 여기서는 없으면 실패로 되돌린다.
  */
 
+import { t } from '@/lib/i18n';
 import { isRestrictedUrl, sendToSW } from '@/lib/messaging/protocol';
-import type { AppError, TabSummary } from '@/lib/messaging/protocol';
+import type { ActionResult, AppError, TabSummary } from '@/lib/messaging/protocol';
 import type { ToolOutcome } from './loop';
 import { isPageAction, type AgentAction } from './tools';
 
@@ -22,35 +23,35 @@ export function createExecutor(getTabId: () => number) {
   return async function execute(action: AgentAction): Promise<ToolOutcome> {
     const tabId = getTabId();
     if (tabId < 0) {
-      return { ok: false, detail: '지금 조작할 수 있는 탭이 없다.' };
+      return { ok: false, detail: t('exec.noTab') };
     }
 
     switch (action.kind) {
       case 'list_tabs': {
         const res = await sendToSW({ type: 'LIST_TABS' });
         if (res.type === 'ERROR') return fail(res.error);
-        if (res.type !== 'TABS') return { ok: false, detail: '탭 목록을 가져오지 못했다.' };
+        if (res.type !== 'TABS') return { ok: false, detail: t('exec.tabsFailed') };
         return { ok: true, detail: formatTabs(res.tabs) };
       }
 
       case 'screenshot': {
         const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId });
         if (res.type === 'ERROR') return fail(res.error);
-        if (res.type !== 'SCREENSHOT') return { ok: false, detail: '화면을 캡처하지 못했다.' };
+        if (res.type !== 'SCREENSHOT') return { ok: false, detail: t('exec.captureFailed') };
         return {
           ok: true,
-          detail: '화면을 캡처했다.',
+          detail: t('exec.captured'),
           // Ollama의 images는 순수 base64만 받는다.
           image: res.dataUrl.replace(/^data:image\/\w+;base64,/, ''),
         };
       }
 
       default: {
-        if (!isPageAction(action)) return { ok: false, detail: '알 수 없는 동작이다.' };
+        if (!isPageAction(action)) return { ok: false, detail: t('exec.unknownAction') };
         const res = await sendToSW({ type: 'EXEC_ACTION', tabId, action });
         if (res.type === 'ERROR') return fail(res.error);
-        if (res.type !== 'ACTION_RESULT') return { ok: false, detail: '동작을 수행하지 못했다.' };
-        return { ok: res.ok, detail: res.detail };
+        if (res.type !== 'ACTION_RESULT') return { ok: false, detail: t('exec.actionFailed') };
+        return { ok: res.result.ok, detail: renderResult(res.result) };
       }
     }
   };
@@ -73,7 +74,8 @@ export function createTargetDescriber(getTabId: () => number) {
       tabId,
       action: { kind: 'describe_target', selector: action.selector },
     });
-    if (res.type === 'ACTION_RESULT' && res.ok) return res.detail;
+    // 승인 카드에는 문장이 아니라 요소 설명 자체가 들어간다.
+    if (res.type === 'ACTION_RESULT' && res.result.ok) return res.result.vars?.target;
     return undefined;
   };
 }
@@ -81,6 +83,21 @@ export function createTargetDescriber(getTabId: () => number) {
 /** 에이전트를 시작할 수 있는 탭인지. chrome:// 등에서는 아무것도 못 한다. */
 export function canRunAgent(tab: TabSummary | null): boolean {
   return Boolean(tab && tab.tabId >= 0 && !isRestrictedUrl(tab.url));
+}
+
+/**
+ * 주입 스크립트가 돌려준 코드를 사용자의 언어로 편다.
+ *
+ * ★ 번역 지점이 여기 하나뿐이어야 한다. 이 문자열은 화면(실행 단계 목록)과
+ *   모델(툴 결과) 양쪽으로 가는데, 둘 다 같은 로케일을 따라야 한다.
+ *
+ * ★ read_page의 본문은 번역 대상이 아니다 — 페이지에서 읽어온 데이터다.
+ */
+export function renderResult(r: ActionResult): string {
+  if (r.code === 'read') return r.text ?? '';
+  // describe_target은 승인 카드용이라 문장으로 감싸지 않는다.
+  if (r.code === 'described') return r.vars?.target ?? '';
+  return t(`act.${r.code}`, r.vars);
 }
 
 function fail(error: AppError): ToolOutcome {
@@ -91,7 +108,7 @@ function fail(error: AppError): ToolOutcome {
 function formatTabs(tabs: TabSummary[]): string {
   const lines = tabs
     .slice(0, MAX_TABS)
-    .map((t, i) => `${i + 1}. ${t.title}${t.active ? ' (현재 탭)' : ''} — ${t.url}`);
-  if (tabs.length > MAX_TABS) lines.push(`… 외 ${tabs.length - MAX_TABS}개`);
+    .map((tab, i) => `${i + 1}. ${tab.title}${tab.active ? t('exec.currentTab') : ''} — ${tab.url}`);
+  if (tabs.length > MAX_TABS) lines.push(t('exec.moreTabs', { n: tabs.length - MAX_TABS }));
   return lines.join('\n');
 }

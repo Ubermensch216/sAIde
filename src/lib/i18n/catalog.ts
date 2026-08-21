@@ -155,6 +155,29 @@ const ko = {
   'composer.needsScreen': '화면',
 
   /* ── 설정 화면 (options) ── */
+  /* ── 액션 결과 (injected.ts가 코드로 돌려준 것) ── */
+  //  ★ 이 문구들은 화면(실행 단계)과 모델(툴 결과) 양쪽으로 간다.
+  'act.found': '찾음: {target}',
+  'act.scrolled': '{direction} 방향으로 스크롤했습니다.',
+  'act.clicked': '클릭했습니다: {target}',
+  'act.typed': '입력했습니다: {target}',
+  'act.navigated': '{url} 로 이동했습니다.',
+  'act.notFound': "'{query}'에 해당하는 요소를 찾지 못했습니다.",
+  'act.noElement': '선택자에 맞는 요소가 없습니다: {selector}',
+  'act.notTextInput': '{target} 는 글자를 넣을 수 있는 요소가 아닙니다.',
+  'act.wrongRoute': 'navigate는 주입 스크립트에서 처리하지 않습니다.',
+
+  /* ── 실행기 (executor.ts) ── */
+  //  ★ 모델에게 가는 문장이라 해라체를 쓴다. 화면 문구와 어조가 다른 것은 의도다.
+  'exec.noTab': '지금 조작할 수 있는 탭이 없다.',
+  'exec.tabsFailed': '탭 목록을 가져오지 못했다.',
+  'exec.captured': '화면을 캡처했다.',
+  'exec.captureFailed': '화면을 캡처하지 못했다.',
+  'exec.unknownAction': '알 수 없는 동작이다.',
+  'exec.actionFailed': '동작을 수행하지 못했다.',
+  'exec.currentTab': ' (현재 탭)',
+  'exec.moreTabs': '… 외 {n}개',
+
   'sw.extractFailed': '페이지 내용을 가져오지 못했습니다.',
   'sw.actionFailed': '동작을 수행하지 못했습니다.',
   'sw.badUrl': '이동할 수 없는 주소입니다: {url}',
@@ -430,6 +453,27 @@ const en = {
   'composer.needsScreen': 'screen',
 
   /* ── Settings screen ── */
+  /* ── Action results ── */
+  'act.found': 'Found: {target}',
+  'act.scrolled': 'Scrolled {direction}.',
+  'act.clicked': 'Clicked: {target}',
+  'act.typed': 'Typed into: {target}',
+  'act.navigated': 'Navigated to {url}.',
+  'act.notFound': "No element matching '{query}' was found.",
+  'act.noElement': 'No element matches that selector: {selector}',
+  'act.notTextInput': '{target} is not something text can be typed into.',
+  'act.wrongRoute': 'navigate is not handled by the injected script.',
+
+  /* ── Executor ── */
+  'exec.noTab': 'There is no tab available to work on right now.',
+  'exec.tabsFailed': 'Could not get the tab list.',
+  'exec.captured': 'Captured the screen.',
+  'exec.captureFailed': 'Could not capture the screen.',
+  'exec.unknownAction': 'That action is not recognized.',
+  'exec.actionFailed': 'Could not carry out the action.',
+  'exec.currentTab': ' (current tab)',
+  'exec.moreTabs': '… and {n} more',
+
   'sw.extractFailed': 'Could not read the page content.',
   'sw.actionFailed': 'Could not carry out the action.',
   'sw.badUrl': 'That address cannot be opened: {url}',

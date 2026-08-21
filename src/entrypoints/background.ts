@@ -145,7 +145,7 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
       if (msg.action.kind === 'navigate') return navigate(msg.tabId, msg.action);
 
       const res = await withContentScript(msg.tabId, { type: 'ACT', action: msg.action });
-      if (res.type === 'ACTED') return { type: 'ACTION_RESULT', ok: res.ok, detail: res.detail };
+      if (res.type === 'ACTED') return { type: 'ACTION_RESULT', result: res.result };
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.actionFailed') } };
     }
@@ -195,7 +195,10 @@ async function navigate(tabId: number, action: PageAction & { kind: 'navigate' }
     };
   }
   await chrome.tabs.update(tabId, { url: target.href });
-  return { type: 'ACTION_RESULT', ok: true, detail: `${target.href} 로 이동했습니다.` };
+  return {
+    type: 'ACTION_RESULT',
+    result: { ok: true, code: 'navigated', vars: { url: target.href } },
+  };
 }
 
 /**
