@@ -12,6 +12,7 @@ import type {
   PsResponse,
   TagsResponse,
 } from '@/types/ollama';
+import { t } from '@/lib/i18n';
 import type { AppError } from '@/lib/messaging/protocol';
 import {
   OllamaError,
@@ -73,22 +74,29 @@ export async function showModel(
   return (await res.json()) as ModelInfo & { capabilities?: string[] };
 }
 
+/**
+ * ★ keep_alive를 부르는 쪽이 정한다.
+ *   임베딩 큐는 '0'을 넘긴다 — 16GB에 gemma(6.9GB)가 상주한 상태에서
+ *   bge-m3(1.2GB)가 몇 분씩 함께 머무르면 대화용 모델이 밀려난다.
+ *   그러면 다음 질문이 콜드 스타트 21초를 다시 문다(Phase 6-1 주의).
+ */
 export async function embed(
   endpoint: string,
   model: string,
   input: string | string[],
+  keepAlive: string = '2m',
 ): Promise<number[][]> {
   let res: Response;
   try {
     res = await fetch(`${endpoint}/api/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input, keep_alive: '2m' }),
+      body: JSON.stringify({ model, input, keep_alive: keepAlive }),
     });
   } catch (e) {
     throw await refineConnectionError(endpoint, e);
   }
-  if (!res.ok) throw new OllamaError('UNKNOWN', `임베딩 실패 (HTTP ${res.status})`);
+  if (!res.ok) throw new OllamaError('UNKNOWN', t('err.embedFailed', { status: res.status }));
   const json = (await res.json()) as EmbedResponse;
   return json.embeddings ?? [];
 }

@@ -9,6 +9,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { checkHealth, warmup, type HealthReport } from '@/lib/ollama/client';
 import { setLocale, useT } from '@/lib/i18n';
+import { createEmbedQueue, type EmbedQueue } from '@/lib/memory/queue';
+import {
+  recall,
+  RECALL_ALIASES,
+  RECALL_PRESET_ID,
+  RECALL_SLASH,
+} from '@/lib/memory/recall';
 import { useChat } from '@/lib/chat/store';
 import { listMessages, pruneEmptyConversations, type Conversation } from '@/lib/storage/db';
 import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
@@ -188,6 +195,45 @@ export default function App() {
     else void chat.send(text, settingsRef.current);
   };
 
+  /* ── 기억 큐 (Phase 6-1) ──
+   *
+   * ★ 대화 중에는 돌지 않는다. 16GB에 gemma(6.9GB)가 상주한 상태에서
+   *   bge-m3를 아무 때나 올리면 대화용 모델이 밀려나고, 사용자는 다음
+   *   질문에서 콜드 스타트 21초를 문다. 판정은 큐가 isBusy로 물어본다.
+   */
+  const queueRef = useRef<EmbedQueue | null>(null);
+  useEffect(() => {
+    const q = createEmbedQueue({
+      isBusy: () => {
+        const c = useChat.getState();
+        return c.streaming || c.extracting;
+      },
+      getSettings: () => settingsRef.current,
+      // 실패해도 화면에 띄우지 않는다. 사용자가 요청한 일이 아니라
+      // 뒤에서 도는 일이라, 배너를 띄우면 방해만 된다.
+      onError: (e) => console.warn('[sAIde] 임베딩 실패', e),
+    });
+    queueRef.current = q;
+    // 보관 기간이 지난 기억은 여기서 정리한다(6-3).
+    void q.sweep();
+    return () => {
+      q.stop();
+      queueRef.current = null;
+    };
+  }, []);
+
+  /**
+   * 읽어들인 페이지를 기억 큐에 넣는다.
+   *
+   * ★ 진입점이 여기 하나인 이유: 이 확장은 **읽은 페이지만** 기억할 수 있다.
+   *   모든 방문을 잡으려면 상시 주입이 필요한데 그것은 설계 결정 ②를 뒤집는다.
+   */
+  useEffect(() => {
+    const page = chat.page;
+    if (!page) return;
+    queueRef.current?.enqueue({ url: page.url, title: page.title, text: page.text });
+  }, [chat.page]);
+
   /* ── 워밍업 ──
    * 콜드 스타트 21.5초를 사용자가 체감하지 않게 만드는 유일한 수단.
    * ★ numCtx는 실제 대화와 동일해야 한다 — 다르면 모델이 리로드된다.
@@ -317,12 +363,47 @@ export default function App() {
 
   /* ── 슬래시 커맨드 (Phase 4-3) ── */
   const commands = useMemo(
-    () => [...builtinCommands(), ...customCommands(customs)],
-    [customs],
+    () => [
+      ...builtinCommands(),
+      // 기억이 꺼져 있으면 목록에 띄우지 않는다. 눌러도 아무 일이 없는
+      // 항목을 보여 주는 것은 안내가 아니라 소음이다.
+      ...(settings.memoryEnabled
+        ? [
+            {
+              slash: RECALL_SLASH,
+              label: t('mem.search.title'),
+              hint: t('mem.search.hint'),
+              presetId: RECALL_PRESET_ID,
+              needs: 'selection' as const,
+              aliases: RECALL_ALIASES,
+            },
+          ]
+        : []),
+      ...customCommands(customs),
+    ],
+    [customs, settings.memoryEnabled, t],
   );
 
   const runSlash = async (cmd: SlashCommand, rest: string) => {
     setDraft('');
+
+    // ★ /기억은 프리셋이 아니다. 프롬프트를 펼치기 전에 임베딩과 검색을
+    //   먼저 돌려야 한다. 찾은 것이 없으면 모델을 부르지 않는다 — 근거 없이
+    //   답하게 두면 기억에서 찾은 척 지어낸다.
+    if (cmd.presetId === RECALL_PRESET_ID) {
+      if (!rest.trim()) return;
+      try {
+        const { hits, prompt } = await recall(rest, settings);
+        if (!hits.length) {
+          chat.setError(t('mem.search.none'));
+          return;
+        }
+        void chat.send(prompt, settings);
+      } catch (e) {
+        chat.setError(e instanceof Error ? e.message : String(e));
+      }
+      return;
+    }
 
     // 페이지·화면이 필요한 커맨드는 먼저 첨부를 확보한다.
     if (cmd.needs === 'page' || cmd.needs === 'screen') {

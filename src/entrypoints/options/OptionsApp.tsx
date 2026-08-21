@@ -25,6 +25,7 @@ import { useRichT, useT } from '@/lib/i18n';
 import { SaideIcon } from '../sidepanel/components/BrandMark';
 import { PresetEditor } from './PresetEditor';
 import { PerfDashboard } from './PerfDashboard';
+import { MemoryPanel } from './MemoryPanel';
 import {
   grantedOrigins,
   hasAllUrls,
@@ -335,6 +336,8 @@ export default function OptionsApp() {
       <PerfDashboard />
 
       <PresetEditor />
+
+      <MemoryPanel />
 
       {/* ── 페이지 접근 권한 ── */}
       <section>

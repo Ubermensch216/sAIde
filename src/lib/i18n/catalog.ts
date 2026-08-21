@@ -51,6 +51,7 @@ const ko = {
   'err.denied.body': '승인되지 않아 페이지를 건드리지 않았습니다.',
   'err.unknown.title': '문제가 발생했습니다',
   'err.unknown.body': '알 수 없는 오류입니다.',
+  'err.embedFailed': '임베딩에 실패했습니다 (HTTP {status})',
   'err.close': '오류 닫기',
 
   /* ── 권한 요청 (App) ── */
@@ -153,6 +154,40 @@ const ko = {
   'composer.commands': '명령 목록',
   'composer.needsPage': '페이지',
   'composer.needsScreen': '화면',
+
+  /* ── 기억 (Phase 6) ── */
+  'mem.h': '기억',
+  'mem.enable': '읽은 페이지 기억하기',
+  'mem.enableDesc':
+    '읽은 페이지를 이 컴퓨터에 저장해 두었다가 나중에 찾아볼 수 있게 합니다. 임베딩도 Ollama가 만들므로 내용은 밖으로 나가지 않습니다.',
+  'mem.scopeDesc':
+    'sAIde가 **실제로 읽은 페이지만** 기억합니다. 그냥 방문한 페이지는 기억하지 않습니다 — 모든 페이지를 들여다보려면 상시 접근 권한이 필요한데, 그렇게 만들지 않았습니다.',
+  'mem.stored': '저장된 기억',
+  'mem.count': '{pages}개 페이지 · {chunks}조각',
+  'mem.oldest': '가장 오래된 기록: {date}',
+  'mem.retention': '보관 기간',
+  'mem.retention.days': '{n}일',
+  'mem.retention.forever': '계속 보관',
+  'mem.retentionDesc': '기간이 지난 기억은 패널을 열 때 자동으로 지워집니다.',
+  'mem.excluded': '기억하지 않을 도메인',
+  'mem.excludedPlaceholder': '예: bank.co.kr',
+  'mem.excludedDesc':
+    '하위 도메인까지 함께 제외합니다. 추가하면 그 도메인의 기존 기억도 함께 지웁니다.',
+  'mem.excludedNone': '아직 없습니다.',
+  'mem.add': '추가',
+  'mem.clear': '기억 전체 삭제',
+  'mem.clearConfirm': '되돌릴 수 없습니다. 정말 지울까요?',
+  'mem.clearYes': '전체 삭제',
+  'mem.clearNo': '취소',
+
+  /* ── 기억 검색 (사이드패널) ── */
+  'mem.search.title': '기억에서 찾기',
+  'mem.search.hint': '전에 읽은 페이지에서 찾기',
+  'mem.search.empty': '기억해 둔 페이지가 없습니다.',
+  'mem.search.none': '비슷한 페이지를 찾지 못했습니다.',
+  'mem.search.searching': '찾는 중…',
+  'mem.search.score': '유사도 {n}%',
+  'mem.search.disabled': '설정에서 기억하기를 켜야 검색할 수 있습니다.',
 
   /* ── 설정 화면 (options) ── */
   /* ── 액션 결과 (injected.ts가 코드로 돌려준 것) ── */
@@ -357,6 +392,7 @@ const en = {
   'err.denied.body': 'It was not approved, so the page was left untouched.',
   'err.unknown.title': 'Something went wrong',
   'err.unknown.body': 'An unknown error occurred.',
+  'err.embedFailed': 'Embedding failed (HTTP {status})',
   'err.close': 'Dismiss error',
 
   'perm.page.denied': 'Reading this site requires access permission.',
@@ -451,6 +487,40 @@ const en = {
   'composer.commands': 'Command list',
   'composer.needsPage': 'page',
   'composer.needsScreen': 'screen',
+
+  /* ── Memory ── */
+  'mem.h': 'Memory',
+  'mem.enable': 'Remember pages I read',
+  'mem.enableDesc':
+    'Keeps pages you had sAIde read on this computer so you can find them later. Ollama makes the embeddings too, so nothing leaves your machine.',
+  'mem.scopeDesc':
+    'Only pages sAIde **actually read** are remembered. Pages you merely visited are not — seeing every page would require standing access, and this extension does not ask for it.',
+  'mem.stored': 'Stored',
+  'mem.count': '{pages} pages · {chunks} chunks',
+  'mem.oldest': 'Oldest entry: {date}',
+  'mem.retention': 'Keep for',
+  'mem.retention.days': '{n} days',
+  'mem.retention.forever': 'Keep indefinitely',
+  'mem.retentionDesc': 'Entries past this age are removed when the panel opens.',
+  'mem.excluded': 'Domains never to remember',
+  'mem.excludedPlaceholder': 'e.g. bank.com',
+  'mem.excludedDesc':
+    'Subdomains are excluded too. Adding one also deletes what is already stored for it.',
+  'mem.excludedNone': 'None yet.',
+  'mem.add': 'Add',
+  'mem.clear': 'Delete all memory',
+  'mem.clearConfirm': 'This cannot be undone. Delete everything?',
+  'mem.clearYes': 'Delete all',
+  'mem.clearNo': 'Cancel',
+
+  /* ── Memory search ── */
+  'mem.search.title': 'Search memory',
+  'mem.search.hint': 'Search pages you read before',
+  'mem.search.empty': 'No pages remembered yet.',
+  'mem.search.none': 'No similar page found.',
+  'mem.search.searching': 'Searching…',
+  'mem.search.score': '{n}% match',
+  'mem.search.disabled': 'Turn on memory in settings to search it.',
 
   /* ── Settings screen ── */
   /* ── Action results ── */
