@@ -13,6 +13,7 @@ import {
   expandCommand,
   findPreset,
   matchSlash,
+  resolveLanguage,
   PAGE_PRESETS,
   SELECTION_PRESETS,
   type CustomPreset,
@@ -72,7 +73,7 @@ describe('expandCommand', () => {
   });
 
   it('선택형은 뒤에 쓴 내용을 대상으로 감싼다', () => {
-    const cmd = CMDS.find((c) => c.slash === '/translate')!;
+    const cmd = CMDS.find((c) => c.slash === '/explain')!;
     const text = expandCommand(cmd, 'hello world', []);
     expect(text).toContain('<page_content>');
     expect(text).toContain('hello world');
@@ -120,6 +121,69 @@ describe('expandCommand', () => {
   it('{{selection}}도 입력도 없으면 본문만 쓴다', () => {
     const cmd = customCommands(customs).find((c) => c.slash === '/tone')!;
     expect(expandCommand(cmd, '', customs)).toBe('정중한 말투로 바꿔줘.');
+  });
+});
+
+describe('페이지 번역', () => {
+  const cmd = () => CMDS.find((c) => c.slash === '/translate')!;
+
+  it('★ /translate는 선택 텍스트가 아니라 페이지를 대상으로 한다', () => {
+    // 이게 selection이면 페이지가 첨부되지 않아 모델이 "무엇을 번역할지"를 되묻는다.
+    expect(cmd().needs).toBe('page');
+    expect(cmd().presetId).toBe('translate-page');
+  });
+
+  it('지정한 언어를 프롬프트에 넣는다', () => {
+    expect(expandCommand(cmd(), '영어', [])).toContain('영어로 번역해줘');
+    expect(expandCommand(cmd(), '일본어', [])).toContain('일본어로 번역해줘');
+  });
+
+  it('언어 코드와 영문 이름도 받는다', () => {
+    expect(resolveLanguage('en')).toBe('영어');
+    expect(resolveLanguage('EN')).toBe('영어');
+    expect(resolveLanguage('English')).toBe('영어');
+    expect(resolveLanguage('ja')).toBe('일본어');
+  });
+
+  it('★ 조사와 "번역" 꼬리가 붙어도 언어를 알아본다', () => {
+    // 사용자는 슬래시 문법을 외우지 않는다. 스크린샷의 입력이 "영어로 번역해"였다.
+    expect(resolveLanguage('영어로')).toBe('영어');
+    expect(resolveLanguage('영어로 번역해')).toBe('영어');
+    expect(resolveLanguage('영어로 번역해줘')).toBe('영어');
+    expect(resolveLanguage('일본어로 번역해주세요')).toBe('일본어');
+  });
+
+  it('표에 없는 언어도 막지 않는다', () => {
+    expect(resolveLanguage('스와힐리어')).toBe('스와힐리어');
+    expect(expandCommand(cmd(), '스와힐리어', [])).toContain('스와힐리어로 번역해줘');
+  });
+
+  it('언어가 없으면 한↔영 왕복으로 돌아간다', () => {
+    expect(resolveLanguage('')).toBeNull();
+    expect(resolveLanguage('   ')).toBeNull();
+    const text = expandCommand(cmd(), '', []);
+    expect(text).toContain('한국어로 번역해줘');
+    expect(text).toContain('이미 한국어라면 영어로');
+  });
+
+  it('★ 언어를 프롬프트 뒤에 덧붙이지 않는다', () => {
+    // takesArg가 빠지면 "…번역해줘\n\n영어"가 되어 언어가 지시로 읽히지 않는다.
+    const text = expandCommand(cmd(), '영어', []);
+    expect(text.endsWith('영어')).toBe(false);
+  });
+
+  it('★ 본문을 프롬프트에 다시 싣지 않는다 (캐시 접두사 보호)', () => {
+    // 본문을 여기 넣으면 고정 블록과 중복돼 2,000토큰을 두 번 프리필한다.
+    const text = expandCommand(cmd(), '영어', []);
+    expect(text).not.toContain('<page_content>\n');
+    expect(text.length).toBeLessThan(400);
+  });
+
+  it('선택 텍스트 번역은 우클릭 메뉴용으로 그대로 남아 있다', () => {
+    const sel = SELECTION_PRESETS.find((p) => p.id === 'translate')!;
+    expect(sel.needs).toBe('selection');
+    expect(sel.slash).toBeUndefined(); // /translate는 페이지 번역이 가져갔다
+    expect(sel.build('hello')).toContain('<page_content>');
   });
 });
 

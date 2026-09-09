@@ -59,13 +59,15 @@ export function suggestedOrder(kind: PageKind): string[] {
   switch (kind) {
     case 'video':
       // 자막이 있으면 요약이 잘 먹는다. 없으면 화면 캡처가 대안이다.
-      return ['summary', 'three-lines', 'screen', 'ask'];
+      return ['summary', 'three-lines', 'screen', 'ask', 'translate-page'];
     case 'code':
-      return ['summary', 'ask', 'three-lines', 'screen'];
+      // 코드 페이지에서 번역은 거의 쓸 일이 없다. 맨 뒤로 민다.
+      return ['summary', 'ask', 'three-lines', 'screen', 'translate-page'];
     case 'doc':
-      return ['summary', 'three-lines', 'ask', 'screen'];
+      // 읽는 글이다. 외국어 문서를 만나는 곳도 여기라 번역을 앞으로 올린다.
+      return ['summary', 'three-lines', 'translate-page', 'ask', 'screen'];
     default:
-      return ['summary', 'three-lines', 'ask', 'screen'];
+      return ['summary', 'three-lines', 'translate-page', 'ask', 'screen'];
   }
 }
 

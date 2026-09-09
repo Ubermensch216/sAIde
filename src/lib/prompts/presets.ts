@@ -19,8 +19,80 @@ export interface Preset {
   /** 자동완성 목록에 보여줄 한 줄 설명 */
   hint?: string;
   needs: PresetNeeds;
+  /**
+   * 슬래시 뒤에 남은 텍스트를 build()의 **인자로** 넘길지.
+   *
+   * 페이지형은 기본적으로 남은 텍스트를 프롬프트 뒤에 덧붙인다("/summary 표로").
+   * 그런데 번역은 그 텍스트가 추가 지시가 아니라 **대상 언어**다. 덧붙이면
+   * "…번역해줘\n\n영어"가 되어 모델이 언어를 지시로 읽지 못한다.
+   */
+  takesArg?: boolean;
   /** 사용자 메시지로 보낼 문구를 만든다 */
   build: (selection?: string) => string;
+}
+
+/* ── 번역 대상 언어 ────────────────────────────────────── */
+
+/**
+ * 사용자가 쓰는 이름을 프롬프트에 넣을 한 가지 표기로 모은다.
+ *
+ * ★ 목록에 없는 언어도 막지 않는다. 모델이 아는 언어는 우리 표보다 훨씬
+ *   많으므로, 모르는 이름은 다듬기만 해서 그대로 넘긴다. 여기서 거부하면
+ *   "지원하지 않는 언어"라는 없는 제약을 우리가 만들어내는 셈이다.
+ */
+const LANGUAGE_ALIASES: Record<string, string> = {
+  en: '영어', eng: '영어', english: '영어', 영어: '영어',
+  ko: '한국어', kr: '한국어', korean: '한국어', 한국어: '한국어', 한글: '한국어', 국어: '한국어',
+  ja: '일본어', jp: '일본어', japanese: '일본어', 일본어: '일본어', 일어: '일본어',
+  zh: '중국어', cn: '중국어', chinese: '중국어', 중국어: '중국어', 중어: '중국어',
+  es: '스페인어', spanish: '스페인어', 스페인어: '스페인어',
+  fr: '프랑스어', french: '프랑스어', 프랑스어: '프랑스어',
+  de: '독일어', german: '독일어', 독일어: '독일어',
+  ru: '러시아어', russian: '러시아어', 러시아어: '러시아어',
+  vi: '베트남어', vietnamese: '베트남어', 베트남어: '베트남어',
+};
+
+/**
+ * 슬래시 뒤에 남은 텍스트에서 대상 언어를 뽑는다.
+ *
+ * ★ 사용자는 슬래시 문법을 외우지 않는다. "/translate 영어"만 받게 만들면
+ *   "/translate 영어로", "/translate 영어로 번역해줘"가 전부 빗나간다.
+ *   조사와 "번역" 꼬리를 떼고 본다.
+ */
+export function resolveLanguage(raw: string): string | null {
+  let t = raw.trim();
+  if (!t) return null;
+
+  t = t.replace(/번역(해\s*줘|해\s*주세요|해|하기|해줘)?/g, '').trim();
+  t = t.replace(/(으로|로|into|to)$/i, '').trim();
+  if (!t) return null;
+
+  const hit = LANGUAGE_ALIASES[t.toLowerCase()];
+  if (hit) return hit;
+
+  // 표에 없는 이름. 언어 이름치고 지나치게 길면 언어가 아니라고 본다.
+  return t.length <= 20 ? t : null;
+}
+
+/** 언어를 지정하지 않았을 때. 예전 선택 텍스트 번역과 같은 왕복 규칙을 쓴다. */
+const TRANSLATE_FALLBACK = '한국어로 번역해줘. 본문이 이미 한국어라면 영어로 번역해줘.';
+
+/**
+ * 페이지 번역 프롬프트.
+ *
+ * ★ 본문을 여기에 다시 넣지 않는다. 본문은 이미 컨텍스트 앞쪽 고정 블록의
+ *   <page_content>에 있고, 그 블록은 대화 내내 바이트 단위로 같아서 KV 캐시가
+ *   재사용된다(실측 7,684ms → 183ms). 여기서 본문을 한 번 더 실으면 그 이득을
+ *   버리는 데다 2,000토큰을 두 번 프리필한다.
+ */
+export function buildPageTranslation(lang?: string): string {
+  const target = resolveLanguage(lang ?? '');
+  return [
+    `위 <page_content>의 내용을 ${target ? `${target}로 번역해줘.` : TRANSLATE_FALLBACK}`,
+    '제목부터 시작해 본문 순서대로 옮기고, 문단 구분은 원문 그대로 유지한다.',
+    '번역문만 출력한다. 원문을 다시 적거나 요약·설명·감상을 덧붙이지 않는다.',
+    '고유명사·인명·수치는 임의로 바꾸지 않는다. 원문에 없는 내용을 채워 넣지 않는다.',
+  ].join('\n');
 }
 
 /* ── 페이지 액션 ───────────────────────────────────────── */
@@ -43,6 +115,21 @@ export const PAGE_PRESETS: Preset[] = [
     hint: '핵심만 세 문장으로',
     needs: 'page',
     build: () => '이 페이지의 핵심을 정확히 3줄로 정리해줘. 각 줄은 한 문장으로.',
+  },
+  {
+    /**
+     * ★ 번역은 출력이 입력만큼 길다. numCtx 4096에 본문 2,000토큰을 넣으면
+     *   남는 출력 공간이 2,000토큰 안팎이라 긴 기사는 뒤가 잘릴 수 있다.
+     *   pageTokenBudget을 줄이거나 numCtx를 올리는 게 해법이고, 그건 설정이다.
+     */
+    id: 'translate-page',
+    label: '이 페이지 번역',
+    slash: '/translate',
+    aliases: ['/번역', '/tr'],
+    hint: '/translate 영어 처럼 언어를 지정합니다',
+    needs: 'page',
+    takesArg: true,
+    build: (lang) => buildPageTranslation(lang),
   },
   {
     id: 'ask',
@@ -82,10 +169,15 @@ function wrapSelection(text: string): string {
 
 export const SELECTION_PRESETS: Preset[] = [
   {
+    /**
+     * ★ 슬래시가 없다. `/translate`는 페이지 번역이 가져갔다.
+     *   선택 텍스트 번역의 진입점은 우클릭 메뉴(background.ts의 saide.translate)이고,
+     *   거기서는 id로 찾으므로 슬래시가 필요 없다. 한 이름이 첨부 대상이 다른 두
+     *   동작을 가리키면, 사용자는 무엇이 번역될지 칠 때마다 추측해야 한다.
+     */
     id: 'translate',
     label: '번역',
-    slash: '/translate',
-    hint: '한↔영 번역',
+    hint: '선택한 텍스트를 한↔영으로',
     needs: 'selection',
     build: (s = '') =>
       `다음 텍스트를 한국어로 자연스럽게 번역해줘. 이미 한국어면 영어로 번역해줘.\n\n${wrapSelection(s)}`,
@@ -215,6 +307,9 @@ export function expandCommand(
 
   // 선택 텍스트형은 뒤에 붙은 내용을 대상으로 삼는다.
   if (preset.needs === 'selection') return preset.build(rest);
+
+  // 인자를 받는 페이지형(번역의 대상 언어)은 뒤에 덧붙이지 않고 넘겨준다.
+  if (preset.takesArg) return preset.build(rest);
 
   const base = preset.build();
   return rest ? `${base}\n\n${rest}` : base;
