@@ -229,6 +229,53 @@ describe('buildContext', () => {
     expect(long.slice(0, 3)).toEqual(short.slice(0, 3));
     expect(long[1]!.content).toContain('<page_content>');
   });
+
+  /* ── 화면 캡처 첨부 ── */
+
+  /**
+   * ★ 회귀 방지: 본문과 캡처가 함께 붙으면 캡처 안내가 사라지던 버그.
+   *   images는 정상적으로 실려 이미지 토큰 256개가 프리필되는데도, content가
+   *   본문 래퍼뿐이라 모델이 "텍스트만 존재한다"며 이미지 존재를 부정했다.
+   *   증상이 모델 답변으로만 드러나서 타입도 빌드도 잡아주지 못한다.
+   */
+  it('★ 본문과 캡처가 함께 붙어도 캡처 안내를 빠뜨리지 않는다', () => {
+    const ctx = buildContext(base, 8192, { page: PAGE, screenshot: 'BASE64PNG' }, 'SYS');
+
+    expect(ctx[1]!.content).toContain('<page_content>');
+    expect(ctx[1]!.content).toContain('화면의 캡처');
+    expect(ctx[1]!.images).toEqual(['BASE64PNG']);
+  });
+
+  it('캡처만 붙으면 안내만 싣는다', () => {
+    const ctx = buildContext(base, 8192, { screenshot: 'BASE64PNG' }, 'SYS');
+
+    expect(ctx[1]!.content).toContain('화면의 캡처');
+    expect(ctx[1]!.content).not.toContain('<page_content>');
+    expect(ctx[1]!.images).toEqual(['BASE64PNG']);
+  });
+
+  it('확인 응답은 실제로 붙은 것만 말한다', () => {
+    const page = buildContext(base, 8192, PAGE, 'SYS');
+    const shot = buildContext(base, 8192, { screenshot: 'B64' }, 'SYS');
+    const both = buildContext(base, 8192, { page: PAGE, screenshot: 'B64' }, 'SYS');
+
+    expect(page[2]!.content).toBe(PAGE_ACK);
+    expect(shot[2]!.content).toBe('화면 캡처를 확인했습니다.');
+    expect(both[2]!.content).toBe('페이지 내용과 화면 캡처를 확인했습니다.');
+  });
+
+  it('★ 캡처가 붙어도 앞 3개 접두사는 턴이 늘어도 그대로다', () => {
+    const att = { page: PAGE, screenshot: 'BASE64PNG' };
+    const t1 = buildContext(base, 8192, att, 'SYS');
+    const t2 = buildContext(
+      [...base, { role: 'user', content: '후속 질문' }, { role: 'assistant', content: '후속 답변' }],
+      8192,
+      att,
+      'SYS',
+    );
+
+    expect(t2.slice(0, 3)).toEqual(t1.slice(0, 3));
+  });
 });
 
 describe('uncachedPrefillSeconds', () => {
