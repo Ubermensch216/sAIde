@@ -1,3 +1,5 @@
+import { updateMemoryPolicy } from '@/lib/memory/store';
+
 /**
  * 계약 ③ — 설정 스키마와 영속화. 계획서 §4.3
  *
@@ -85,22 +87,67 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const KEY = 'saide.settings';
 
-export async function loadSettings(): Promise<Settings> {
-  const raw = await chrome.storage.local.get(KEY);
-  const stored = (raw?.[KEY] ?? {}) as Partial<Settings>;
-  // 신규 설정 항목이 추가돼도 기존 사용자가 깨지지 않도록 항상 기본값과 병합한다.
-  return { ...DEFAULT_SETTINGS, ...stored };
-}
-
-export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  const next = { ...(await loadSettings()), ...patch };
-  await chrome.storage.local.set({ [KEY]: next });
+export function normalizeSettings(input: unknown): Settings {
+  const raw = input && typeof input === 'object' ? input as Partial<Settings> : {};
+  const next = { ...DEFAULT_SETTINGS };
+  const enums = { thinkMode: ['off', 'agent-only', 'always'], theme: ['light', 'dark', 'system'], locale: ['ko', 'en'] };
+  for (const [key, values] of Object.entries(enums)) {
+    const value = raw[key as keyof Settings];
+    if (values.includes(String(value))) Object.assign(next, { [key]: value });
+  }
+  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
+  for (const key of ['model', 'embedModel'] as const) if (typeof raw[key] === 'string' && /^[\w.:/-]{1,200}$/.test(raw[key])) next[key] = raw[key];
+  if (typeof raw.endpoint === 'string') {
+    try {
+      const url = new URL(raw.endpoint);
+      if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash) next.endpoint = url.href.replace(/\/+$/, '');
+    } catch { /* damaged settings use a safe default */ }
+  }
+  const ranges = { temperature: [0, 1.5], numCtx: [2048, 32768], pageTokenBudget: [500, 8000], agentMaxTurns: [2, 12], agentIdleTimeoutMs: [20000, 120000], memoryRetentionDays: [0, 3650] };
+  for (const [key, [min, max]] of Object.entries(ranges)) {
+    const value = raw[key as keyof Settings];
+    if (typeof value === 'number' && Number.isFinite(value)) Object.assign(next, { [key]: Math.min(max!, Math.max(min!, key === 'temperature' ? value : Math.round(value))) });
+  }
+  if (['5m', '10m', '30m', '-1'].includes(raw.keepAlive ?? '')) next.keepAlive = raw.keepAlive!;
+  if (Array.isArray(raw.memoryExcludedDomains)) next.memoryExcludedDomains = [...new Set(raw.memoryExcludedDomains
+    .filter((v): v is string => typeof v === 'string')
+    .map(v => v.trim().toLowerCase().replace(/^\.+|\.$/g, ''))
+    .filter(v => /^[a-z0-9.-]+$/.test(v)))].slice(0, 500);
   return next;
 }
 
+export async function loadSettings(): Promise<Settings> {
+  const raw = await chrome.storage.local.get(KEY);
+  return normalizeSettings(raw?.[KEY]);
+}
+
+let writes: Promise<unknown> = Promise.resolve();
+function withSettingsLock<T>(work: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.locks) return navigator.locks.request('saide.settings', work);
+  const next = writes.then(work, work);
+  writes = next.catch(() => undefined);
+  return next;
+}
+
+async function persist(next: Settings, memoryChanged: boolean): Promise<Settings> {
+  if (memoryChanged) await updateMemoryPolicy({ enabled: next.memoryEnabled, excluded: next.memoryExcludedDomains });
+  await chrome.storage.local.set({ [KEY]: next });
+  return next;
+}
+export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+  return withSettingsLock(async () => {
+    const next = normalizeSettings({ ...(await loadSettings()), ...patch });
+    if (patch.endpoint !== undefined) {
+      let valid = false;
+      try { const url = new URL(patch.endpoint); valid = ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash; } catch { /* invalid */ }
+      if (!valid) throw new Error('올바른 HTTP/HTTPS Ollama 주소를 입력하세요.');
+    }
+    return persist(next, patch.memoryEnabled !== undefined || patch.memoryExcludedDomains !== undefined);
+  });
+}
+
 export async function resetSettings(): Promise<Settings> {
-  await chrome.storage.local.set({ [KEY]: DEFAULT_SETTINGS });
-  return DEFAULT_SETTINGS;
+  return withSettingsLock(() => persist({ ...DEFAULT_SETTINGS, memoryExcludedDomains: [] }, true));
 }
 
 export function onSettingsChanged(cb: (s: Settings) => void): () => void {
@@ -109,7 +156,7 @@ export function onSettingsChanged(cb: (s: Settings) => void): () => void {
     area: string,
   ) => {
     if (area !== 'local' || !changes[KEY]) return;
-    cb({ ...DEFAULT_SETTINGS, ...(changes[KEY].newValue as Partial<Settings>) });
+    cb(normalizeSettings(changes[KEY].newValue));
   };
   chrome.storage.onChanged.addListener(listener);
   return () => chrome.storage.onChanged.removeListener(listener);

@@ -1,3 +1,5 @@
+import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
+import type { RequestControl, SWToContent } from '@/lib/messaging/protocol';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
  *
@@ -15,7 +17,6 @@ import { loadSettings, onSettingsChanged } from '@/lib/storage/settings';
 import {
   isRestrictedUrl,
   type ContentToSW,
-  type PageAction,
   type PanelToSW,
   type SWToPanel,
   type TabSummary,
@@ -41,7 +42,12 @@ export default defineBackground(() => {
     registerContextMenus();
   });
 
-  chrome.runtime.onMessage.addListener((msg: PanelToSW, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
+    if (!trustedPanel(sender)) return false;
+    if (!validPanelRequest(msg)) {
+      sendResponse({ type: 'ERROR', error: { code: 'ACTION_DENIED', message: '유효하지 않거나 만료된 요청입니다.' } });
+      return false;
+    }
     handlePanelMessage(msg)
       .then(sendResponse)
       .catch((e: unknown) =>
@@ -118,7 +124,20 @@ function registerContextMenus() {
 
 /* ── 패널 요청 처리 ────────────────────────────────────── */
 
-async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
+const cancelled = new Map<string, number>();
+const inFlight = new Map<string, { tabId: number; control: RequestControl }>();
+
+export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
+  for (const [id, until] of cancelled) if (until < Date.now()) cancelled.delete(id);
+  if (msg.type === 'CANCEL_REQUEST') {
+    if (cancelled.size >= 1000) cancelled.delete(cancelled.keys().next().value!);
+    cancelled.set(msg.requestId, Date.now() + 60_000);
+    const pending = inFlight.get(msg.requestId);
+    if (pending) void chrome.tabs.sendMessage(pending.tabId, { type: 'CANCEL', control: pending.control } satisfies SWToContent, { frameId: 0 }).catch(() => undefined);
+    return { type: 'ACTIVE_TAB', tab: null };
+  }
+  const control = msg.control!;
+  const isCancelled = () => cancelled.has(control?.id);
   switch (msg.type) {
     case 'GET_ACTIVE_TAB': {
       const tab = await activeTab();
@@ -134,17 +153,20 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
       const res = await withContentScript(msg.tabId, {
         type: 'EXTRACT',
         budgetTokens: msg.budgetTokens,
+        control,
       });
       if (res.type === 'EXTRACTED') return { type: 'PAGE_EXTRACTED', payload: res.payload };
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
     }
 
+    case 'PREPARE_ACTION': {
+      const res = await withContentScript(msg.tabId, { type: 'PREPARE', action: msg.action, control });
+      if (res.type === 'PREPARED') return { type: 'ACTION_PREPARED', token: res.token, label: res.label };
+      return res.type === 'FAILED' ? { type: 'ERROR', error: res.error } : { type: 'ERROR', error: { code: 'ACTION_DENIED', message: '대상을 확인할 수 없습니다.' } };
+    }
     case 'EXEC_ACTION': {
-      // navigate만 content script가 아니라 여기서 처리한다 (페이지가 사라지므로)
-      if (msg.action.kind === 'navigate') return navigate(msg.tabId, msg.action);
-
-      const res = await withContentScript(msg.tabId, { type: 'ACT', action: msg.action });
+      const res = await withContentScript(msg.tabId, { type: 'ACT', action: msg.action, control });
       if (res.type === 'ACTED') return { type: 'ACTION_RESULT', result: res.result };
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.actionFailed') } };
@@ -152,7 +174,7 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
 
     case 'CAPTURE_SCREENSHOT': {
       try {
-        const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+        const dataUrl = await captureTab(msg.tabId, control, isCancelled);
         return { type: 'SCREENSHOT', dataUrl };
       } catch (e) {
         const raw = String(e);
@@ -173,42 +195,21 @@ async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
   }
 }
 
-async function navigate(tabId: number, action: PageAction & { kind: 'navigate' }): Promise<SWToPanel> {
-  // 모델이 만들어낸 URL이다. http/https 외의 스킴은 통과시키지 않는다.
-  let target: URL;
-  try {
-    target = new URL(action.url);
-  } catch {
-    return {
-      type: 'ERROR',
-      error: { code: 'UNKNOWN', message: t('sw.badUrl', { url: action.url }) },
-    };
-  }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    return {
-      type: 'ERROR',
-      error: {
-        code: 'ACTION_DENIED',
-        message: t('sw.badScheme', { scheme: target.protocol }),
-        hint: t('sw.badSchemeHint'),
-      },
-    };
-  }
-  await chrome.tabs.update(tabId, { url: target.href });
-  return {
-    type: 'ACTION_RESULT',
-    result: { ok: true, code: 'navigated', vars: { url: target.href } },
-  };
-}
-
 /**
  * content script를 온디맨드 주입한 뒤 메시지를 보낸다.
  * 이미 주입돼 있으면 재주입은 무해하다(WXT가 중복 실행을 막는다).
  */
 async function withContentScript(
   tabId: number,
-  msg: { type: 'EXTRACT'; budgetTokens: number } | { type: 'ACT'; action: PageAction },
+  msg: SWToContent,
 ): Promise<ContentToSW> {
+  inFlight.set(msg.control.id, { tabId, control: msg.control });
+  const expiry = setTimeout(() => inFlight.delete(msg.control.id), Math.max(0, msg.control.deadline - Date.now()));
+  try { return await dispatchContent(tabId, msg); }
+  finally { clearTimeout(expiry); inFlight.delete(msg.control.id); }
+}
+
+async function dispatchContent(tabId: number, msg: SWToContent): Promise<ContentToSW> {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab || isRestrictedUrl(tab.url)) {
     return {
@@ -222,6 +223,7 @@ async function withContentScript(
   }
 
   try {
+    assertCurrent(msg.control, tab.url ?? '', cancelled.has(msg.control.id));
     await chrome.scripting.executeScript({ target: { tabId }, files: [INJECTED_SCRIPT] });
   } catch (e) {
     // 대부분은 해당 사이트 권한이 아직 없는 경우다. 원문 오류만 보여주면
@@ -241,7 +243,9 @@ async function withContentScript(
   }
 
   try {
-    return (await chrome.tabs.sendMessage(tabId, msg)) as ContentToSW;
+    const current = await chrome.tabs.get(tabId);
+    assertCurrent(msg.control, current.url ?? '', cancelled.has(msg.control.id));
+    return (await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 })) as ContentToSW;
   } catch (e) {
     return { type: 'FAILED', error: { code: 'UNKNOWN', message: String(e) } };
   }

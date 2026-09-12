@@ -4,7 +4,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path -LiteralPath $ChromePath)) { throw "Chrome executable not found: $ChromePath" }
-Invoke-WebRequest 'http://127.0.0.1:4175/' -TimeoutSec 5 | Out-Null
+Invoke-WebRequest 'http://127.0.0.1:4175/' -UseBasicParsing -TimeoutSec 5 | Out-Null
 $screenshotRoot = Join-Path $projectRoot 'docs\screenshots'
 $captureRoot = Join-Path $projectRoot ('.output\docs-captures-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Force $screenshotRoot, $captureRoot | Out-Null

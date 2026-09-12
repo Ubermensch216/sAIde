@@ -266,7 +266,7 @@ export default function App() {
   const blocked =
     health.state === 'down' ||
     health.state === 'cors-blocked' ||
-    health.state === 'model-missing';
+    health.state === 'model-missing' || chat.loading;
 
   const canReadPage = Boolean(tab && !isRestrictedUrl(tab.url));
 
@@ -448,22 +448,7 @@ export default function App() {
   };
 
   const pickConversation = async (c: Conversation) => {
-    // 진행 중인 생성·승인 대기를 먼저 정리한다. 남겨 두면 다른 대화에
-    // 토큰이 흘러 들어가고, 승인 대기 Promise는 영원히 안 풀린다.
-    chat.stop();
-
-    const msgs = await listMessages(c.id);
-    useChat.setState({
-      conversation: c,
-      pending: null, // 저장된 대화를 열었으므로 대기 상태를 비운다
-      messages: msgs,
-      error: null,
-      page: null,
-      screenshot: null,
-      lastContext: null,
-      agentSteps: [],
-      agentTurn: 0,
-    });
+    await chat.openConversation(c);
     setMenuOpen(false);
   };
 

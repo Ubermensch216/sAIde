@@ -1,3 +1,5 @@
+import { abortable, idleSignal } from '@/lib/async';
+import { estimateTokens } from '@/lib/extract/budget';
 /**
  * NDJSON 스트리밍 파서. 계획서 §5 Phase 2-1
  *
@@ -18,7 +20,7 @@ import type {
   StreamChunk,
   ToolCall,
 } from '@/types/ollama';
-import { classifyFetchError, classifyResponse } from './errors';
+import { OllamaError, classifyFetchError, classifyResponse } from './errors';
 
 export interface StreamHandlers {
   /** 답변 본문 토큰 */
@@ -45,10 +47,11 @@ export function consumeLine(
   try {
     chunk = JSON.parse(line) as StreamChunk;
   } catch {
-    // 서버가 비정상 종료하면 잘린 JSON이 올 수 있다. 스트림 전체를 죽이지 않는다.
-    return;
+    throw new OllamaError('UNKNOWN', '서버에서 올바르지 않은 JSON 응답을 받았습니다.');
   }
 
+  if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) throw new OllamaError('UNKNOWN', '올바르지 않은 스트림 응답입니다.');
+  if ('error' in chunk && typeof chunk.error === 'string') throw new OllamaError('UNKNOWN', chunk.error);
   const msg = chunk.message;
   if (msg?.thinking) handlers.onThinking?.(msg.thinking);
   if (msg?.content) handlers.onToken?.(msg.content);
@@ -72,7 +75,7 @@ export function toPerfSample(done: DoneChunk, ttfbMs: number): PerfSample {
     decodeTokPerSec: safeDiv(done.eval_count, nsToSec(done.eval_duration)),
     promptTokens: done.prompt_eval_count ?? 0,
     outputTokens: done.eval_count ?? 0,
-    totalMs: Math.round(nsToSec(done.total_duration) * 1000),
+    totalMs: Math.round(nsToSec(done.total_duration ?? 0) * 1000),
     // load_duration이 유의미하면 모델을 새로 올린 것 — 콜드 스타트다.
     wasCold: (done.load_duration ?? 0) > 1e9,
   };
@@ -90,6 +93,18 @@ export async function streamChat(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<PerfSample | null> {
+  assertRequestBudget(req);
+  signal?.throwIfAborted();
+  const guard = idleSignal(180_000, signal);
+  try {
+    return await readChat(endpoint, req, handlers, guard.signal, guard.touch);
+  } catch (error) {
+    if (guard.signal.aborted) throw new OllamaError(signal?.aborted ? 'ABORTED' : 'TIMEOUT', signal?.aborted ? '생성을 중단했습니다.' : '서버에서 180초 동안 응답을 받지 못했습니다.');
+    throw error;
+  } finally { guard.dispose(); }
+}
+
+async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHandlers, signal: AbortSignal, touch: () => void): Promise<PerfSample | null> {
   const body: ChatRequest = {
     think: false,
     keep_alive: '10m',
@@ -100,26 +115,26 @@ export async function streamChat(
   const startedAt = performance.now();
   let res: Response;
   try {
-    res = await fetch(`${endpoint}/api/chat`, {
+    res = await abortable(fetch(`${endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal,
-    });
+    }), signal);
   } catch (e) {
     throw classifyFetchError(e);
   }
 
-  if (!res.ok || !res.body) throw await classifyResponse(res);
+  if (!res.ok || !res.body) throw await abortable(classifyResponse(res), signal);
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let ttfbMs = 0;
+  let ttfbMs: number | null = null;
   let perf: PerfSample | null = null;
 
   const markFirst = () => {
-    if (ttfbMs === 0) ttfbMs = Math.round(performance.now() - startedAt);
+    if (ttfbMs === null) ttfbMs = Math.round(performance.now() - startedAt);
   };
 
   const wrapped: StreamHandlers = {
@@ -131,13 +146,14 @@ export async function streamChat(
       markFirst();
       handlers.onThinking?.(t);
     },
-    onToolCall: handlers.onToolCall,
+    onToolCall: call => { markFirst(); handlers.onToolCall?.(call); },
   };
 
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await abortable(reader.read(), signal);
       if (done) break;
+      touch();
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
@@ -145,22 +161,39 @@ export async function streamChat(
 
       for (const line of lines) {
         consumeLine(line, wrapped, (c) => {
-          perf = toPerfSample(c as unknown as DoneChunk, ttfbMs);
+          perf = toPerfSample(c as unknown as DoneChunk, ttfbMs ?? 0);
           handlers.onDone?.(c as unknown as DoneChunk, perf);
         });
+        if (perf) break;
       }
+      if (perf) { buffer = ''; break; }
+      if (buffer.length > 2_000_000) throw new OllamaError('UNKNOWN', '서버 응답 한 줄이 허용 크기를 초과했습니다.');
     }
 
     // 스트림이 개행 없이 끝나는 경우 버퍼에 마지막 줄이 남는다.
     if (buffer.trim()) {
       consumeLine(buffer, wrapped, (c) => {
-        perf = toPerfSample(c as unknown as DoneChunk, ttfbMs);
+        perf = toPerfSample(c as unknown as DoneChunk, ttfbMs ?? 0);
         handlers.onDone?.(c as unknown as DoneChunk, perf);
       });
     }
+    if (!perf) throw new OllamaError('UNKNOWN', '응답이 완료되기 전에 연결이 종료되었습니다. 다시 시도하세요.');
   } finally {
+    void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 
   return perf;
+}
+
+/** Conservative estimate, not a tokenizer guarantee. Reject oversized requests before HTTP. */
+export function assertRequestBudget(req: ChatRequest): void {
+  const limit = req.options?.num_ctx;
+  if (!limit) return;
+  const tokens = req.messages.reduce((sum, m) => sum + estimateTokens(m.content) + (m.images?.length ?? 0) * 1024 +
+    (m.tool_calls ? estimateTokens(JSON.stringify(m.tool_calls)) : 0) + 8, 0) +
+    (req.tools ? estimateTokens(JSON.stringify(req.tools)) : 0);
+  if (tokens > Math.floor(limit * 0.7)) {
+    throw new OllamaError('UNKNOWN', '질문·본문·도구 결과가 입력 예산을 초과했습니다.', '본문을 분리하거나 질문을 나누고, 필요한 경우 컨텍스트 크기를 늘려주세요.');
+  }
 }

@@ -1,3 +1,6 @@
+import { assertCurrent, validAction, validControl } from '@/lib/browser/guards';
+import { createApprovalRegistry } from '@/lib/browser/approval';
+import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol';
 /**
  * 주입 스크립트 — 본문 추출과 DOM 조작. 계획서 §5 Phase 3-1 / 5
  *
@@ -9,7 +12,7 @@
  * defineContentScript는 `matches`를 manifest의 host_permissions로 승격시키는데,
  * `<all_urls>`가 박히면 설계 결정 ②(상시 주입 금지)가 무의미해지고 심사·프라이버시
  * 모두 불리해진다. unlisted script는 번들만 만들고 manifest에 등록하지 않으므로,
- * background가 activeTab 권한으로 executeScript 할 때만 실제로 주입된다.
+ * background가 허용된 사이트 권한으로 executeScript 할 때만 실제로 주입된다.
  */
 
 import { Readability } from '@mozilla/readability';
@@ -35,25 +38,39 @@ declare global {
   }
 }
 
+const approvals = createApprovalRegistry(resolveTarget, describe);
+const cancelled = new Map<string, number>();
+
 export default defineUnlistedScript(() => {
   // background는 요청마다 executeScript를 호출한다(이미 주입됐는지 알 수 없으므로).
   // 가드가 없으면 리스너가 중첩되어 같은 요청에 여러 번 응답하게 된다.
   if (window.__saideInjected) return;
   window.__saideInjected = true;
 
-  chrome.runtime.onMessage.addListener((msg: SWToContent, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: SWToContent, sender, sendResponse) => {
+    if (sender.id !== chrome.runtime.id || !msg || !validControl(msg.control)) return false;
+    for (const [id, until] of cancelled) if (until <= Date.now()) cancelled.delete(id);
+    if (msg.type === 'CANCEL') {
+      if (cancelled.size >= 1000) cancelled.delete(cancelled.keys().next().value!);
+      cancelled.set(msg.control.id, msg.control.deadline);
+      sendResponse({ type: 'FAILED', error: { code: 'ABORTED', message: '작업이 취소되었습니다.' } } satisfies ContentToSW);
+      return false;
+    }
     // 자막 추출이 비동기라 handler 전체를 Promise로 감싼다.
     (async () => {
       try {
-        if (msg.type === 'EXTRACT') {
+        assertCurrent(msg.control, location.href, cancelled.has(msg.control.id));
+        if (msg.type === 'PREPARE' && validAction(msg.action)) {
+          sendResponse({ type: 'PREPARED', ...approvals.prepare(msg.action, msg.control) } satisfies ContentToSW);
+        } else if (msg.type === 'EXTRACT') {
           sendResponse({
             type: 'EXTRACTED',
             payload: await extractPage(msg.budgetTokens),
           } satisfies ContentToSW);
-        } else if (msg.type === 'ACT') {
+        } else if (msg.type === 'ACT' && validAction(msg.action)) {
           sendResponse({
             type: 'ACTED',
-            result: await performAction(msg.action),
+            result: await performAction(msg.action, msg.control),
           } satisfies ContentToSW);
         }
       } catch (e) {
@@ -122,7 +139,9 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
  * ★ 여기서는 문장을 만들지 않는다. 무슨 일이 있었는지(code)와 그에 딸린
  *   값(vars)만 돌려준다. 문구는 패널이 로케일에 맞춰 만든다.
  */
-async function performAction(action: PageAction): Promise<ActionResult> {
+export async function performAction(action: PageAction, control: RequestControl): Promise<ActionResult> {
+  assertCurrent(control, location.href);
+  if (requiresApproval(action)) approvals.consume(action, control);
   switch (action.kind) {
     case 'read_page': {
       const p = await extractPage(2000);
@@ -176,7 +195,8 @@ async function performAction(action: PageAction): Promise<ActionResult> {
       }
       const el = found;
       el.focus();
-      el.value = action.text;
+      const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(el, action.text);
       // React 등 프레임워크가 상태를 갱신하도록 실제 이벤트를 발생시킨다.
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -184,8 +204,9 @@ async function performAction(action: PageAction): Promise<ActionResult> {
     }
 
     case 'navigate':
-      // background에서 처리한다. 여기 오면 라우팅 버그다.
-      return { ok: false, code: 'wrongRoute' };
+      if (!['http:', 'https:'].includes(new URL(action.url).protocol)) throw new Error('허용되지 않은 주소입니다.');
+      location.assign(action.url);
+      return { ok: true, code: 'navigated', vars: { url: action.url } };
   }
 }
 
@@ -202,15 +223,21 @@ async function performAction(action: PageAction): Promise<ActionResult> {
  */
 function resolveTarget(selector: string): HTMLElement | null {
   try {
-    const el = document.querySelector<HTMLElement>(selector);
-    if (el) return el;
+    const matches = [...document.querySelectorAll<HTMLElement>(selector)].filter(isUsable);
+    if (matches.length > 0) return matches.length === 1 ? matches[0]! : null;
   } catch {
     // 선택자로 성립하지 않는 문자열이다. 사람 말로 보고 아래에서 다시 찾는다.
   }
   return findByText(selector);
 }
 
+function isUsable(el: HTMLElement): boolean {
+  const style = getComputedStyle(el);
+  return el.isConnected && !el.closest('[inert]') && !el.matches(':disabled, [aria-disabled="true"]') && style.display !== 'none' && style.visibility !== 'hidden' && el.getClientRects().length > 0;
+}
+
 function isTextInput(el: HTMLElement): el is HTMLInputElement | HTMLTextAreaElement {
+  if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && (el.readOnly || el.disabled)) return false;
   const tag = el.tagName.toLowerCase();
   if (tag === 'textarea') return true;
   if (tag !== 'input') return false;
@@ -225,7 +252,9 @@ function findByText(query: string): HTMLElement | null {
   const candidates = document.querySelectorAll<HTMLElement>(
     'button, a, input, textarea, select, [role="button"], [role="link"]',
   );
+  const matches: HTMLElement[] = [];
   for (const el of candidates) {
+    if (!isUsable(el)) continue;
     const label = (
       el.innerText ||
       el.getAttribute('aria-label') ||
@@ -235,9 +264,9 @@ function findByText(query: string): HTMLElement | null {
     )
       .trim()
       .toLowerCase();
-    if (label && label.includes(q)) return el;
+    if (label && label.includes(q)) matches.push(el);
   }
-  return null;
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 /** 승인 카드에 보여줄 사람이 읽는 요소 설명. */

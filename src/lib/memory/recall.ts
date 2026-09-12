@@ -44,7 +44,7 @@ export async function recall(query: string, s: Settings): Promise<RecallResult> 
   const [vector] = await embed(s.endpoint, s.embedModel, q, '0');
   if (!vector) return { hits: [], prompt: '' };
 
-  const hits = await search(vector, RECALL_LIMIT, s.embedModel);
+  const hits = await search(vector, RECALL_LIMIT, s.embedModel, { retentionDays: s.memoryRetentionDays, excluded: s.memoryExcludedDomains, minScore: 0.2 });
   return { hits, prompt: hits.length ? buildRecallPrompt(q, hits) : '' };
 }
 

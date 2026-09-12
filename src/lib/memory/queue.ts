@@ -21,7 +21,7 @@
 
 import { embed } from '@/lib/ollama/client';
 import type { Settings } from '@/lib/storage/settings';
-import { chunkText, prune, savePage, shouldRemember } from './store';
+import { chunkText, memoryEpoch, prune, savePage, shouldRemember } from './store';
 
 /** 유휴로 판정하기까지 기다리는 시간. 사용자가 연달아 묻는 흐름을 끊지 않는다. */
 export const IDLE_DELAY_MS = 8_000;
@@ -45,7 +45,8 @@ export interface QueueDeps {
 }
 
 export function createEmbedQueue(deps: QueueDeps) {
-  const pending: PendingPage[] = [];
+  const pending: Array<PendingPage & { epoch: Promise<number> }> = [];
+  let active: AbortController | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running = false;
   let stopped = false;
@@ -72,28 +73,32 @@ export function createEmbedQueue(deps: QueueDeps) {
     try {
       const item = pending.shift();
       if (!item) return;
+      const epoch = await item.epoch;
+      if (stopped || epoch !== await memoryEpoch() || !shouldRemember(item.url, deps.getSettings().memoryExcludedDomains)) return;
+      active = new AbortController();
 
       const chunks = chunkText(item.text);
       if (!chunks.length) return;
 
       // ★ keep_alive 0 — 끝나는 즉시 내려간다. 머리말 ② 참조.
-      const vectors = await embed(s.endpoint, s.embedModel, chunks, '0');
+      const vectors = await embed(s.endpoint, s.embedModel, chunks, '0', active.signal);
       if (vectors.length !== chunks.length) {
         throw new Error(`임베딩 개수가 맞지 않는다: ${vectors.length}/${chunks.length}`);
       }
 
-      await savePage({
+      const saved = await savePage({
         url: item.url,
         title: item.title,
         chunks,
         vectors,
         model: s.embedModel,
-      });
-      deps.onSaved?.(item.url, chunks.length);
+      }, epoch, () => !stopped && deps.getSettings().memoryEnabled && shouldRemember(item.url, deps.getSettings().memoryExcludedDomains));
+      if (saved) deps.onSaved?.(item.url, saved);
     } catch (e) {
       deps.onError?.(e);
     } finally {
       running = false;
+      active = null;
       // 남은 것이 있으면 이어서. 연달아 돌리되 사이를 벌린다.
       schedule();
     }
@@ -115,7 +120,9 @@ export function createEmbedQueue(deps: QueueDeps) {
       const i = pending.findIndex((p) => p.url === page.url);
       if (i >= 0) pending.splice(i, 1);
 
-      pending.push(page);
+      const epoch = memoryEpoch();
+      void epoch.catch(() => undefined);
+      pending.push({ ...page, epoch });
       while (pending.length > MAX_QUEUE) pending.shift();
       schedule();
       return true;
@@ -132,6 +139,7 @@ export function createEmbedQueue(deps: QueueDeps) {
     size: () => pending.length,
     stop() {
       stopped = true;
+      active?.abort();
       if (timer) clearTimeout(timer);
       timer = null;
       pending.length = 0;

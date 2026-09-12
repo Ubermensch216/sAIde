@@ -1,3 +1,5 @@
+import { abortable, deadlineSignal } from '@/lib/async';
+
 /**
  * 계약 ② — Side Panel ↔ Service Worker ↔ Content Script 3자 통신 규약.
  * 계획서 §4.2
@@ -134,12 +136,22 @@ export interface ActionResult {
 
 /* ── Panel → Service Worker ────────────────────────────── */
 
-export type PanelToSW =
+export interface RequestControl {
+  id: string;
+  deadline: number;
+  expectedUrl?: string;
+  approvalToken?: string;
+}
+
+export type PanelToSW = (
   | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
   | { type: 'EXEC_ACTION'; tabId: number; action: PageAction }
   | { type: 'LIST_TABS' }
-  | { type: 'GET_ACTIVE_TAB' };
+  | { type: 'GET_ACTIVE_TAB' }
+  | { type: 'PREPARE_ACTION'; tabId: number; action: PageAction }
+  | { type: 'CANCEL_REQUEST'; requestId: string }
+) & { control?: RequestControl };
 
 /* ── Service Worker → Panel ────────────────────────────── */
 
@@ -151,6 +163,7 @@ export interface TabSummary {
 }
 
 export type SWToPanel =
+  | { type: 'ACTION_PREPARED'; token: string; label?: string }
   | { type: 'PAGE_EXTRACTED'; payload: ExtractedPage }
   | { type: 'SCREENSHOT'; dataUrl: string }
   | { type: 'ACTION_RESULT'; result: ActionResult }
@@ -162,19 +175,39 @@ export type SWToPanel =
 
 /* ── Service Worker → Content Script ───────────────────── */
 
-export type SWToContent =
+export type SWToContent = (
+  | { type: 'CANCEL' }
   | { type: 'EXTRACT'; budgetTokens: number }
-  | { type: 'ACT'; action: PageAction };
+  | { type: 'ACT'; action: PageAction }
+  | { type: 'PREPARE'; action: PageAction }
+) & { control: RequestControl };
 
 export type ContentToSW =
+  | { type: 'PREPARED'; token: string; label?: string }
   | { type: 'EXTRACTED'; payload: ExtractedPage }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 
 /* ── 타입 안전한 sendMessage 헬퍼 ──────────────────────── */
 
-export async function sendToSW(msg: PanelToSW): Promise<SWToPanel> {
-  return chrome.runtime.sendMessage(msg) as Promise<SWToPanel>;
+export async function sendToSW(msg: PanelToSW, signal?: AbortSignal, timeoutMs = 15_000): Promise<SWToPanel> {
+  signal?.throwIfAborted();
+  const guard = deadlineSignal(timeoutMs, signal);
+  const control: RequestControl = {
+    ...msg.control,
+    id: crypto.randomUUID(),
+    deadline: Date.now() + timeoutMs,
+  };
+  const cancel = () => {
+    void chrome.runtime.sendMessage({ type: 'CANCEL_REQUEST', requestId: control.id }).catch(() => undefined);
+  };
+  guard.signal.addEventListener('abort', cancel, { once: true });
+  try {
+    return await abortable(chrome.runtime.sendMessage({ ...msg, control }), guard.signal) as SWToPanel;
+  } finally {
+    guard.signal.removeEventListener('abort', cancel);
+    guard.dispose();
+  }
 }
 
 export async function sendToContent(

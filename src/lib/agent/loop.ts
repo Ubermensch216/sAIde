@@ -1,3 +1,4 @@
+import { abortable, deadlineSignal } from '@/lib/async';
 /**
  * 에이전트 실행 루프. 계획서 §5 Phase 5-2 / 5-3 / 5-4
  *
@@ -123,7 +124,7 @@ export interface AgentDeps {
   approve: (request: ApprovalRequest) => Promise<boolean>;
   /**
    * 승인 카드에 넣을 대상 요소 설명을 미리 확인한다(부작용 없음).
-   * 실패해도 승인 절차는 그대로 진행한다 — 라벨이 없을 뿐이다.
+   * 실패하거나 시간 초과이면 승인과 실행을 중단한다.
    */
   describeTarget?: (action: AgentAction, signal: AbortSignal) => Promise<string | undefined>;
   /** 현재 페이지. 승인 카드에 "어느 페이지에서 일어나는 일인지" 띄운다. */
@@ -196,7 +197,7 @@ export async function runAgentLoop(
     const guard = idleGuard(idleMs, opts.signal);
     let result: TurnResult;
     try {
-      result = await deps.chat(
+      result = await abortable(deps.chat(
         messages,
         {
           onToken: (t) => {
@@ -209,7 +210,7 @@ export async function runAgentLoop(
           },
         },
         guard.signal,
-      );
+      ), guard.signal);
     } catch (e) {
       if (opts.signal?.aborted) return done('aborted');
       content = turnContent || content;
@@ -306,9 +307,14 @@ export async function runAgentLoop(
         continue;
       }
 
-      const request = await buildApproval(action, deps, opts.signal);
+      let request: ApprovalRequest;
+      try { request = await buildApproval(action, deps, opts.signal); }
+      catch (error) {
+        return done(opts.signal?.aborted ? 'aborted' : 'tool-failed', String(error));
+      }
       deps.onEvent?.({ type: 'approval-start', request });
-      approved = await deps.approve(request);
+      try { approved = await abortable(deps.approve(request), opts.signal); }
+      catch (error) { if (opts.signal?.aborted) return done('aborted'); throw error; }
       deps.onEvent?.({ type: 'approval-end', approved });
 
       if (opts.signal?.aborted) return done('aborted');
@@ -330,7 +336,7 @@ export async function runAgentLoop(
     const exec = idleGuard(toolMs, opts.signal);
     try {
       exec.bump();
-      outcome = await deps.execute(action, exec.signal);
+      outcome = await abortable(deps.execute(action, exec.signal), exec.signal);
     } catch (e) {
       if (opts.signal?.aborted) return done('aborted');
       outcome = {
@@ -409,13 +415,10 @@ async function buildApproval(
   signal?: AbortSignal,
 ): Promise<ApprovalRequest> {
   let targetLabel: string | undefined;
-  if (deps.describeTarget && (action.kind === 'click' || action.kind === 'type_text')) {
-    try {
-      targetLabel = await deps.describeTarget(action, signal ?? new AbortController().signal);
-    } catch {
-      // 대상을 미리 못 봤다고 승인을 건너뛰지는 않는다. 라벨만 비운다.
-      targetLabel = undefined;
-    }
+  if (deps.describeTarget) {
+    const guard = deadlineSignal(TOOL_TIMEOUT_MS, signal);
+    try { targetLabel = await abortable(deps.describeTarget(action, guard.signal), guard.signal); }
+    finally { guard.dispose(); }
   }
 
   const page = deps.currentPage?.() ?? { url: '', title: '' };

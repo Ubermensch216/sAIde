@@ -17,7 +17,7 @@ import {
   stats,
   type MemoryStats,
 } from '@/lib/memory/store';
-import { loadSettings, saveSettings, type Settings } from '@/lib/storage/settings';
+import { loadSettings, normalizeSettings, onSettingsChanged, saveSettings, type Settings } from '@/lib/storage/settings';
 
 const RETENTION_CHOICES = [7, 30, 90, 0];
 
@@ -28,14 +28,19 @@ export function MemoryPanel() {
   const [info, setInfo] = useState<MemoryStats | null>(null);
   const [domain, setDomain] = useState('');
   const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState('');
+  const run = async (work: () => Promise<unknown>) => {
+    try { setError(''); await work(); } catch (error) { setError(String(error)); }
+  };
 
   const refresh = useCallback(async () => {
-    setInfo(await stats());
+    try { setInfo(await stats()); } catch (error) { setError(String(error)); }
   }, []);
 
   useEffect(() => {
-    void loadSettings().then(setS);
+    void loadSettings().then(setS).catch(error => setError(String(error)));
     void refresh();
+    return onSettingsChanged(settings => { setS(settings); void refresh(); });
   }, [refresh]);
 
   if (!s) return null;
@@ -45,6 +50,7 @@ export function MemoryPanel() {
   const addDomain = async () => {
     const d = domain.trim().toLowerCase().replace(/^\.+/, '');
     if (!d || s.memoryExcludedDomains.includes(d)) return;
+    if (!normalizeSettings({ memoryExcludedDomains: [d] }).memoryExcludedDomains.includes(d)) throw new Error('example.com 형태의 도메인을 입력하세요.');
     await patch({ memoryExcludedDomains: [...s.memoryExcludedDomains, d] });
     // ★ 제외 목록에 넣는 것은 "앞으로 저장하지 말라"가 아니라 "이 도메인은
     //   기억하지 말라"는 뜻이다. 이미 쌓인 것을 남겨 두면 통제가 절반이다.
@@ -60,6 +66,7 @@ export function MemoryPanel() {
   return (
     <section>
       <h2>{t('mem.h')}</h2>
+      {error && <p className="warn" role="alert">{error}</p>}
 
       <div className="field">
         <div className="row">
@@ -68,7 +75,7 @@ export function MemoryPanel() {
             id="mem"
             type="checkbox"
             checked={s.memoryEnabled}
-            onChange={(e) => void patch({ memoryEnabled: e.target.checked })}
+            onChange={(e) => { const checked = e.target.checked; void run(() => patch({ memoryEnabled: checked })); }}
           />
         </div>
         <p className="desc">{t('mem.enableDesc')}</p>
@@ -100,7 +107,7 @@ export function MemoryPanel() {
           <select
             id="retention"
             value={s.memoryRetentionDays}
-            onChange={(e) => void patch({ memoryRetentionDays: Number(e.target.value) })}
+            onChange={(e) => { const days = Number(e.target.value); void run(() => patch({ memoryRetentionDays: days })); }}
           >
             {RETENTION_CHOICES.map((d) => (
               <option key={d} value={d}>
@@ -122,10 +129,10 @@ export function MemoryPanel() {
             placeholder={t('mem.excludedPlaceholder')}
             onChange={(e) => setDomain(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') void addDomain();
+              if (e.key === 'Enter') void run(addDomain);
             }}
           />
-          <button className="btn-sm" onClick={() => void addDomain()}>
+          <button className="btn-sm" onClick={() => void run(addDomain)}>
             {t('mem.add')}
           </button>
         </div>
@@ -138,7 +145,7 @@ export function MemoryPanel() {
             {s.memoryExcludedDomains.map((d) => (
               <li key={d}>
                 <code>{d}</code>
-                <button className="btn-sm" onClick={() => void removeDomain(d)}>
+                <button className="btn-sm" onClick={() => void run(() => removeDomain(d))}>
                   {t('ui.delete')}
                 </button>
               </li>
@@ -157,11 +164,11 @@ export function MemoryPanel() {
             <span className="warn">{t('mem.clearConfirm')}</span>
             <button
               className="btn"
-              onClick={async () => {
+              onClick={() => void run(async () => {
                 await clearAll();
                 setConfirming(false);
                 await refresh();
-              }}
+              })}
             >
               {t('mem.clearYes')}
             </button>

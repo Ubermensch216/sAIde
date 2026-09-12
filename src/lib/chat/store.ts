@@ -1,3 +1,4 @@
+import { abortable } from '@/lib/async';
 /**
  * 채팅 상태. 계획서 §5 Phase 2–3
  *
@@ -11,12 +12,14 @@
 import { create } from 'zustand';
 import type { ChatMessage, PerfSample } from '@/types/ollama';
 import { streamChat } from '@/lib/ollama/stream';
+import { requireCapabilities } from '@/lib/ollama/client';
 import { OllamaError } from '@/lib/ollama/errors';
 import {
   addMessage,
   createConversation,
   db,
   deleteMessagesFrom,
+  deleteConversation,
   findForTab,
   listMessages,
   titleFrom,
@@ -33,7 +36,7 @@ import { sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
 import { AGENT_TOOLS } from '@/lib/agent/tools';
-import { createExecutor, createTargetDescriber } from '@/lib/agent/executor';
+import { createBrowserTools } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
 import { buildAgentSystem } from '@/lib/prompts/agent';
 
@@ -46,12 +49,13 @@ export interface AgentTab {
 
 /** 화면에 그리는 메시지. 저장 레코드에 스트리밍 중 상태가 얹힌다. */
 export interface UiMessage extends Omit<StoredMessage, 'id'> {
-  id: number | 'streaming';
+  id: number | string;
   streaming?: boolean;
 }
 
 interface ChatState {
   conversation: Conversation | null;
+  loading: boolean;
   /**
    * 아직 저장되지 않은 대화의 소속 정보.
    * 사이드패널은 탭마다 열리므로, 실제로 말이 오가기 전에는 레코드를 만들지
@@ -105,6 +109,7 @@ interface ChatState {
   pendingApproval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
 
   openForTab: (tabId: number, url: string) => Promise<void>;
+  openConversation: (conversation: Conversation) => Promise<void>;
   attachPage: (tabId: number, settings: Settings) => Promise<ExtractedPage | null>;
   attachScreenshot: (tabId: number) => Promise<string | null>;
   detachPage: () => void;
@@ -120,8 +125,13 @@ interface ChatState {
   clearError: () => void;
 }
 
+let viewEpoch = 0;
+let operationEpoch = 0;
+let attachmentEpoch = 0;
+
 export const useChat = create<ChatState>((set, get) => ({
   conversation: null,
+  loading: false,
   pending: null,
   messages: [],
   page: null,
@@ -140,30 +150,25 @@ export const useChat = create<ChatState>((set, get) => ({
 
   /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
   async openForTab(tabId, url) {
-    // 스트리밍 중 탭이 바뀌면 진행 중인 생성을 끊는다. 다른 대화에 토큰이
-    // 섞여 들어가는 것이 훨씬 나쁘다.
     get().stop();
-
-    // ★ 여기서 대화를 만들지 않는다. 사이드패널은 탭이 열릴 때마다 함께
-    //   열리므로, 열자마자 레코드를 만들면 빈 대화방이 탭 수만큼 쌓인다.
-    //   실제 생성은 첫 메시지를 보낼 때(ensureConversation) 한다.
-    const conversation = await findForTab(tabId, url);
-    const stored = conversation ? await listMessages(conversation.id) : [];
-
-    // 페이지는 대화를 갈아끼울 때 떼어낸다. 다른 탭의 본문을 물고 가면
-    // 모델이 엉뚱한 페이지를 근거로 답하게 된다.
-    set({
-      conversation,
-      pending: conversation ? null : { tabId, url },
-      messages: stored,
-      // 첨부물은 페이지가 바뀌면 반드시 떼어낸다. 이전 페이지 본문을 물고 가면
-      // 모델이 엉뚱한 글을 근거로 답한다.
-      page: null,
-      screenshot: null,
-      currentUrl: url,
-      error: null,
-      lastContext: null,
-    });
+    const epoch = ++viewEpoch;
+    ++attachmentEpoch;
+    set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [] });
+    try {
+      const conversation = await findForTab(tabId, url);
+      const messages = conversation ? await listMessages(conversation.id) : [];
+      if (epoch === viewEpoch) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
+    } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
+  },
+  async openConversation(conversation) {
+    get().stop();
+    const epoch = ++viewEpoch;
+    ++attachmentEpoch;
+    set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
+    try {
+      const messages = await listMessages(conversation.id);
+      if (epoch === viewEpoch) set({ conversation, messages, loading: false });
+    } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
   },
 
   /**
@@ -175,7 +180,9 @@ export const useChat = create<ChatState>((set, get) => ({
    */
   async attachPage(tabId, settings) {
     const current = get().page;
-    if (get().extracting) return current;
+    if (get().extracting || get().loading) return current;
+    const epoch = ++attachmentEpoch;
+    const expectedUrl = get().currentUrl;
 
     set({ extracting: true, error: null });
     try {
@@ -183,7 +190,9 @@ export const useChat = create<ChatState>((set, get) => ({
         type: 'EXTRACT_PAGE',
         tabId,
         budgetTokens: settings.pageTokenBudget,
+        control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined },
       });
+      if (epoch !== attachmentEpoch) return null;
 
       if (res.type === 'ERROR') {
         set({ error: res.error });
@@ -197,8 +206,11 @@ export const useChat = create<ChatState>((set, get) => ({
 
       set({ page, currentUrl: page.url, lastContext: null });
       return page;
+    } catch (error) {
+      if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
+      return null;
     } finally {
-      set({ extracting: false });
+      if (epoch === attachmentEpoch) set({ extracting: false });
     }
   },
 
@@ -209,11 +221,14 @@ export const useChat = create<ChatState>((set, get) => ({
    * 실측 262토큰 / 프리필 4.5초로, 본문을 넣는 것보다 오히려 싸고 빠르다.
    */
   async attachScreenshot(tabId) {
-    if (get().extracting) return get().screenshot;
+    if (get().extracting || get().loading) return get().screenshot;
+    const epoch = ++attachmentEpoch;
+    const expectedUrl = get().currentUrl;
 
     set({ extracting: true, error: null });
     try {
-      const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId });
+      const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId, control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined } });
+      if (epoch !== attachmentEpoch) return null;
       if (res.type === 'ERROR') {
         set({ error: res.error });
         return null;
@@ -224,58 +239,19 @@ export const useChat = create<ChatState>((set, get) => ({
       const base64 = res.dataUrl.replace(/^data:image\/\w+;base64,/, '');
       set({ screenshot: base64, lastContext: null });
       return base64;
+    } catch (error) {
+      if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
+      return null;
     } finally {
-      set({ extracting: false });
+      if (epoch === attachmentEpoch) set({ extracting: false });
     }
   },
 
-  detachPage: () => set({ page: null, lastContext: null }),
-  detachScreenshot: () => set({ screenshot: null, lastContext: null }),
+  detachPage: () => { ++attachmentEpoch; set({ page: null, lastContext: null, extracting: false }); },
+  detachScreenshot: () => { ++attachmentEpoch; set({ screenshot: null, lastContext: null, extracting: false }); },
 
-  async send(text, settings) {
-    const trimmed = text.trim();
-    if (!trimmed || get().streaming) return;
-
-    // 대화는 여기서 처음 저장된다 — 제목까지 한 번에 정해 갱신 쿼리를 아낀다.
-    const conv = await ensureConversation(set, get, trimmed);
-    if (!conv) return;
-
-    const userMsg: Omit<StoredMessage, 'id'> = {
-      conversationId: conv.id,
-      role: 'user',
-      content: trimmed,
-      createdAt: Date.now(),
-    };
-    const userId = await addMessage(userMsg);
-
-    set((s) => ({ messages: [...s.messages, { ...userMsg, id: userId }] }));
-    await runGeneration(set, get, settings);
-  },
-
-  /**
-   * 에이전트 모드 전송 (Phase 5).
-   *
-   * ★ 호출 전에 호스트 권한이 확보돼 있어야 한다. 루프 도중에는 사용자
-   *   제스처가 없어 chrome.permissions.request가 거부된다(executor.ts 참조).
-   */
-  async sendAgent(text, settings, tab) {
-    const trimmed = text.trim();
-    if (!trimmed || get().streaming) return;
-
-    const conv = await ensureConversation(set, get, trimmed);
-    if (!conv) return;
-
-    const userMsg: Omit<StoredMessage, 'id'> = {
-      conversationId: conv.id,
-      role: 'user',
-      content: trimmed,
-      createdAt: Date.now(),
-    };
-    const userId = await addMessage(userMsg);
-
-    set((s) => ({ messages: [...s.messages, { ...userMsg, id: userId }] }));
-    await runAgent(set, get, settings, tab);
-  },
+  async send(text, settings) { await submit(set, get, text, settings); },
+  async sendAgent(text, settings, tab) { await submit(set, get, text, settings, tab); },
 
   resolveApproval(approved) {
     const pending = get().pendingApproval;
@@ -286,22 +262,27 @@ export const useChat = create<ChatState>((set, get) => ({
 
   /** 재생성: 마지막 assistant 응답을 걷어내고 같은 입력으로 다시 돌린다. */
   async regenerate(settings) {
-    if (get().streaming) return;
+    if (get().streaming || get().loading) return;
     const conv = get().conversation;
-    if (!conv) return;
-
     const msgs = get().messages;
-    const lastAssistantIdx = findLastIndex(msgs, (m) => m.role === 'assistant');
-    if (lastAssistantIdx < 0) return;
-
-    const target = msgs[lastAssistantIdx]!;
-    await deleteMessagesFrom(conv.id, target.createdAt);
-    set({ messages: msgs.slice(0, lastAssistantIdx) });
-
-    await runGeneration(set, get, settings);
+    const index = findLastIndex(msgs, m => m.role === 'assistant');
+    if (!conv || index < 0) return;
+    const epoch = ++operationEpoch;
+    set({ streaming: true, abort: new AbortController() });
+    const ownSet = guardedSet(set, () => epoch === operationEpoch);
+    try {
+      await requireCapabilities(settings.endpoint, settings.model, get().screenshot ? ['vision'] : [], get().abort?.signal);
+      if (epoch !== operationEpoch) return;
+      await deleteMessagesFrom(conv.id, msgs[index]!.createdAt);
+      if (epoch !== operationEpoch) return;
+      ownSet({ messages: msgs.slice(0, index) });
+      await runGeneration(ownSet, get, settings);
+    } catch (error) { ownSet({ error: toAppError(null, error) }); }
+    finally { ownSet({ streaming: false, abort: null }); }
   },
 
   stop() {
+    ++operationEpoch;
     // 승인 대기 중에 중단을 누르면 그 동작은 거부로 처리한다.
     // 대기 중인 Promise를 남겨 두면 루프가 영원히 멈춰 있게 된다.
     const pending = get().pendingApproval;
@@ -311,9 +292,10 @@ export const useChat = create<ChatState>((set, get) => ({
     }
 
     const { abort } = get();
-    if (!abort) return;
-    abort.abort();
-    set({ abort: null, streaming: false, startedAt: null, agentTurn: 0 });
+    abort?.abort();
+    set(s => ({ abort: null, streaming: false, startedAt: null, agentTurn: 0,
+      messages: s.messages.filter(m => !m.streaming || m.content || m.thinking).map(m => m.streaming ? { ...m, streaming: false, aborted: true } : m),
+    }));
   },
 
   // 문자열로 넘어온 것은 분류되지 않은 오류다. 코드만 씌워 형태를 맞춘다.
@@ -329,6 +311,32 @@ type Set = (
 ) => void;
 type Get = () => ChatState;
 
+function guardedSet(set: Set, owns: () => boolean): Set {
+  return patch => { if (owns()) set(patch); };
+}
+
+async function submit(set: Set, get: Get, text: string, settings: Settings, tab?: AgentTab) {
+  const trimmed = text.trim();
+  if (!trimmed || get().streaming || get().loading) return;
+  const epoch = ++operationEpoch;
+  const owns = () => epoch === operationEpoch;
+  const ownSet = guardedSet(set, owns);
+  ownSet({ streaming: true, abort: new AbortController(), error: null });
+  try {
+    await requireCapabilities(settings.endpoint, settings.model, [...(tab ? ['tools'] : []), ...(get().screenshot ? ['vision'] : [])], get().abort?.signal);
+    if (!owns()) return;
+    const conv = await ensureConversation(ownSet, get, trimmed, owns);
+    if (!conv || !owns()) return;
+    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: Date.now() };
+    const id = await addMessage(userMsg);
+    if (!owns()) return;
+    ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
+    if (tab) await runAgent(ownSet, get, settings, tab);
+    else await runGeneration(ownSet, get, settings);
+  } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
+  finally { ownSet({ streaming: false, abort: null, startedAt: null }); }
+}
+
 /**
  * 대화 레코드를 확보한다. 아직 없으면 지금 만든다.
  *
@@ -340,6 +348,7 @@ async function ensureConversation(
   set: Set,
   get: Get,
   firstMessage: string,
+  owns: () => boolean,
 ): Promise<Conversation | null> {
   const existing = get().conversation;
   if (existing) return existing;
@@ -350,6 +359,7 @@ async function ensureConversation(
   const id = await createConversation(p.tabId, p.url, titleFrom(firstMessage));
   const conv = await db.conversations.get(id);
   if (!conv) return null;
+  if (!owns()) { await deleteConversation(id); return null; }
 
   set({ conversation: conv, pending: null });
   return conv;
@@ -403,7 +413,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   const conv = get().conversation;
   if (!conv) return;
 
-  const abort = new AbortController();
+  const abort = get().abort ?? new AbortController();
   const startedAt = Date.now();
 
   const { page, screenshot, stale } = freshAttachment(set, get);
@@ -419,7 +429,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   // 스트리밍 중 자리표시자. 실제 저장은 완료 후 한 번만 한다 —
   // 토큰마다 IndexedDB에 쓰면 21 tok/s에서도 부하가 크다.
   const placeholder: UiMessage = {
-    id: 'streaming',
+    id: `streaming-${crypto.randomUUID()}`,
     conversationId: conv.id,
     role: 'assistant',
     content: '',
@@ -444,7 +454,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   const flush = () =>
     set((s) => ({
       messages: s.messages.map((m) =>
-        m.id === 'streaming' ? { ...m, content, thinking } : m,
+        m.id === placeholder.id ? { ...m, content, thinking } : m,
       ),
     }));
 
@@ -471,7 +481,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   const notice = staleNotice ?? truncNotice;
 
   try {
-    perf = await streamChat(
+    perf = await abortable(streamChat(
       settings.endpoint,
       {
         model: settings.model,
@@ -493,7 +503,8 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
         },
       },
       abort.signal,
-    );
+    ), abort.signal);
+    abort.signal.throwIfAborted();
 
     flush();
 
@@ -509,7 +520,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
 
     set((s) => ({
       messages: s.messages.map((m) =>
-        m.id === 'streaming'
+        m.id === placeholder.id
           ? {
               ...m,
               id,
@@ -544,7 +555,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       });
       set((s) => ({
         messages: s.messages.map((m) =>
-          m.id === 'streaming'
+          m.id === placeholder.id
             ? { ...m, id, content, notice, aborted: true, streaming: false }
             : m,
         ),
@@ -558,7 +569,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
 
     // 실패한 자리표시자는 남기지 않는다. 오류는 배너로 보여준다.
     set((s) => ({
-      messages: s.messages.filter((m) => m.id !== 'streaming'),
+      messages: s.messages.filter((m) => m.id !== placeholder.id),
       streaming: false,
       startedAt: null,
       abort: null,
@@ -581,7 +592,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   const conv = get().conversation;
   if (!conv) return;
 
-  const abort = new AbortController();
+  const abort = get().abort ?? new AbortController();
   const startedAt = Date.now();
   const { page, screenshot, stale } = freshAttachment(set, get);
 
@@ -596,7 +607,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   );
 
   const placeholder: UiMessage = {
-    id: 'streaming',
+    id: `streaming-${crypto.randomUUID()}`,
     conversationId: conv.id,
     role: 'assistant',
     content: '',
@@ -625,7 +636,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   const flush = () =>
     set((s) => ({
       messages: s.messages.map((m) =>
-        m.id === 'streaming' ? { ...m, content, thinking, steps: s.agentSteps } : m,
+        m.id === placeholder.id ? { ...m, content, thinking, steps: s.agentSteps } : m,
       ),
     }));
   const schedule = () => {
@@ -637,14 +648,18 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
     }, 60);
   };
 
-  const execute = createExecutor(() => tab.tabId);
-  const describeTarget = createTargetDescriber(() => tab.tabId);
+  const { execute, describeTarget } = createBrowserTools(() => tab.tabId, () => tab.url);
+  let visionChecked = Boolean(screenshot);
 
   try {
     const outcome = await runAgentLoop(
       context,
       {
         chat: async (messages, handlers, signal): Promise<TurnResult> => {
+          if (!visionChecked && messages.some(message => message.images?.length)) {
+            await requireCapabilities(settings.endpoint, settings.model, ['vision'], signal);
+            visionChecked = true;
+          }
           let turnContent = '';
           let turnThinking = '';
           const toolCalls: TurnResult['toolCalls'] = [];
@@ -667,13 +682,13 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
                 turnContent += t;
                 content = turnContent;
                 handlers.onToken?.(t);
-                schedule();
+                if (!abort.signal.aborted) schedule();
               },
               onThinking: (t) => {
                 turnThinking += t;
                 thinking += t;
                 handlers.onThinking?.(t);
-                schedule();
+                if (!abort.signal.aborted) schedule();
               },
               onToolCall: (c) => toolCalls.push(c),
             },
@@ -688,7 +703,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
 
         // 승인 카드가 뜨고, 사용자가 누를 때까지 루프가 여기서 멈춘다.
         approve: (request) =>
-          new Promise<boolean>((resolve) => set({ pendingApproval: { request, resolve } })),
+          new Promise<boolean>((resolve) => { if (abort.signal.aborted) resolve(false); else set({ pendingApproval: { request, resolve } }); }),
 
         currentPage: () => ({ url: tab.url, title: tab.title }),
 
@@ -728,7 +743,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
 
     set((s) => ({
       messages: s.messages.map((m) =>
-        m.id === 'streaming'
+        m.id === placeholder.id
           ? {
               ...m,
               id,
@@ -756,7 +771,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
     const aborted = err?.code === 'ABORTED' || abort.signal.aborted;
 
     set((s) => ({
-      messages: s.messages.filter((m) => m.id !== 'streaming'),
+      messages: s.messages.filter((m) => m.id !== placeholder.id),
       streaming: false,
       startedAt: null,
       abort: null,

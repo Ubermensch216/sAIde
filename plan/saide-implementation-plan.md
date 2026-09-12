@@ -14,6 +14,7 @@ src/entrypoints/
   options/            연결·성능·기억·프리셋·권한 설정
 src/lib/
   agent/              스키마·루프·실행기
+  browser/            요청·캡처 보호·문서별 승인·브라우저 fixture 테스트
   chat/               상태·컨텍스트
   ollama/             HTTP·스트림·오류
   storage/            설정·프리셋·DB
@@ -38,7 +39,7 @@ scripts/ docs/        문서·UI 예시 캡처 환경
 
 ## 3. 1차 개선 — 행동·데이터 안전성
 
-아래는 **미완료 작업**이다. 이번 문서 갱신으로 수정 완료 처리하지 않는다.
+아래 코드 보완과 결정적 회귀 테스트를 구현했다. 실제 확장 브라우저 QA는 별도 미완료다. [이번 실행 결과](system-hardening.md)에 항목별 상태를 기록한다.
 
 | 항목 | 작업 | 회귀 검증 / 완료 조건 |
 |---|---|---|
@@ -48,7 +49,7 @@ scripts/ docs/        문서·UI 예시 캡처 환경
 | R04 | memory epoch·삭제 barrier·도메인 공통 판정 | 지연 임베딩 중 제외/끄기/전체 삭제, 하위 도메인 삭제 후 재생성 없음 |
 | R05 | 대화별/요청별 작업 소유권 | 늦은 A 응답이 B의 메시지/abort/streaming을 수정하지 않음 |
 
-worker/content 경로까지 포함하는 fixture를 만들고 위 시나리오를 먼저 실패 테스트로 고정한다. 기존 모의 실행기가 signal을 준수한다는 가정으로 실제 실행기의 취소를 증명하지 않는다.
+Chrome API mock과 실제 content listener/React 폼 fixture로 경합을 검사한다. signal을 무시하는 도구와 주입 중 취소도 검증했다. 실제 Chrome 이벤트 순서와 권한 처리는 E2E로 추가 확인한다.
 
 ## 4. 2차 개선 — 입력·설정·프로토콜
 
@@ -58,15 +59,15 @@ worker/content 경로까지 포함하는 fixture를 만들고 위 시나리오�
 | R07 | 공통 settings hook·검증·저장 직렬화 | 저장 endpoint로 최초 probe, ko/en 즉시 반영, 여러 설정 페이지 변경 일관 |
 | R08 | show capability·network timeout·stream error | tags capability 없는 fixture, 403/404/OOM/done 없는 EOF를 올바르게 안내 |
 
-전송 중 모델·numCtx 변경의 처리 정책도 정한다. 단순 슬라이더 범위 제한과 저장 schema 검증은 별개다. 원격 Ollama를 지원할지 로컬로 제한할지는 제품 결정 후 권한·데이터 고지에 반영한다.
+전송 예산 거부, 설정 정규화·Web Locks·변경 구독, show 조회·tools/vision gate·HTTP 시간 제한·NDJSON 검증을 적용했다. pinned 자동 축약, 서버 버전별 계약, 프리셋 저장 직렬화와 원격 endpoint 전용 권한 UX는 남아 있다. 진행 중 모델 호출에는 전송 당시 settings snapshot을 사용한다.
 
 ## 5. 3차 개선 — 데이터와 사용자 경험
 
-- 대화 검색/페이지 이동/전체 삭제/내보내기·복원, 삭제 확인 또는 undo.
-- 기억 검색 시 보관 기간·제외 도메인 필터, 차원/모델 digest 검증, 유사도 하한, 재임베딩.
+- 완료: 개별 대화 삭제 확인, 검색 보관 기간·제외 도메인·차원·유사도 하한 검사.
+- 잔여: 대화 검색/페이지 이동/전체 삭제/내보내기·복원/undo, 모델 digest 검증·재임베딩.
 - 첨부 근거 보존 여부와 저장 용량 정책. 캡처 이미지를 자동 영구 보존할 경우 opt-in과 삭제 UI부터 설계.
-- React controlled input, 중복 요소, 가려진 요소, disabled 요소, SPA 이동 fixture.
-- 키보드만으로 대화 선택·승인 거부·모달 닫기, 포커스 복구, 좁은 패널·200% 확대 QA.
+- 완료: React controlled input, 중복·숨김·disabled 거부, 대화 선택 버튼·승인 포커스 순환/복구. 잔여: 가려진 요소·SPA·iframe·Shadow DOM 실제 사이트 검증.
+- 잔여: 좁은 패널·200% 확대·스크린리더·고대비 종합 QA.
 - 실패한 임베딩·저장 작업의 사용자 알림과 재시도 경로.
 
 ## 6. 배포 관문
@@ -75,9 +76,9 @@ worker/content 경로까지 포함하는 fixture를 만들고 위 시나리오�
 |---|---|---|
 | README/개발 문서 | 이번 갱신 | 기능 변경 때 코드와 함께 갱신 |
 | UI 예시 캡처 | 문서용 harness 제공 | 실제 확장 캡처를 추가하고 샘플과 구분 |
-| 의존성 추적 정리 | node_modules 4,100파일 추적 | index 정리 검토, clean clone npm ci 성공 |
-| 런타임 명시 | engines/packageManager 미선언 | 테스트한 버전 범위 및 minimum_chrome_version 선언 |
-| CI | 없음 | clean install → compile → test → build·artifact 검사 |
+| 의존성 추적 정리 | 4,100파일 추적 해제, 설치 보존 | 격리 offline npm ci 통과; 빈 캐시 네트워크 설치 잔여 |
+| 런타임 명시 | Node 24/npm 11, .nvmrc, packageManager, Chrome 116 선언 | 다른 OS의 동일 버전 실행 확인 |
+| CI | Windows/Linux workflow와 artifact 검사 추가 | 로컬 새 설치 pipeline 통과; 원격 CI 실행 잔여 |
 | 보안 감사 | 이번 미실행 | lockfile 의존성 감사·위험 검토 기록 |
 | 라이선스 | 없음 | 소유자의 배포/사용 조건 결정과 LICENSE |
 | 개인정보 고지 | 사용자 안내 보강 | 스토어용 공개 URL·데이터 흐름 일치 검토 |
@@ -91,6 +92,7 @@ worker/content 경로까지 포함하는 fixture를 만들고 위 시나리오�
 npm run compile
 npm test
 npm run build
+node scripts/verify-build.mjs
 npm run test:live -- src/lib/ollama/live.itest.ts
 ```
 

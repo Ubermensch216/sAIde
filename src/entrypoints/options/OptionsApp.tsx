@@ -6,13 +6,14 @@
  * 실시간으로 보여주고, 사용자가 알고 늘리게 한다.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { checkHealth } from '@/lib/ollama/client';
 import type { ModelInfo } from '@/types/ollama';
 import {
   DEFAULT_SETTINGS,
   estimateTtfbSeconds,
   loadSettings,
+  onSettingsChanged,
   resetSettings,
   saveSettings,
   MEASURED_PREFILL_TOK_PER_SEC,
@@ -21,7 +22,7 @@ import {
   type ThemePref,
   type ThinkMode,
 } from '@/lib/storage/settings';
-import { useRichT, useT } from '@/lib/i18n';
+import { setLocale, useRichT, useT } from '@/lib/i18n';
 import { SaideIcon } from '../sidepanel/components/BrandMark';
 import { PresetEditor } from './PresetEditor';
 import { PerfDashboard } from './PerfDashboard';
@@ -44,8 +45,9 @@ export default function OptionsApp() {
   const [allSites, setAllSites] = useState(false);
 
   useEffect(() => {
-    loadSettings().then(setS);
+    void loadSettings().then(settings => { setS(settings); setLocale(settings.locale); void probe(settings); });
     void reloadPermissions();
+    return onSettingsChanged(settings => { setS(settings); setLocale(settings.locale); });
   }, []);
 
   const reloadPermissions = async () => {
@@ -60,12 +62,15 @@ export default function OptionsApp() {
   }, [s.theme]);
 
   /** 모델 목록을 /api/tags에서 동적으로 불러온다. 하드코딩하지 않는다. */
+  const probeVersion = useRef(0);
   const probe = async (settings: Settings) => {
+    const version = ++probeVersion.current;
     setConn(null);
     const h = await checkHealth(settings.endpoint, settings.model);
+    if (version !== probeVersion.current) return;
     setModels(h.models);
     setConn(
-      h.state === 'down' || h.state === 'cors-blocked'
+      h.state === 'down' || h.state === 'cors-blocked' || h.state === 'model-missing'
         ? { ok: false, text: h.error?.message ?? t('opt.conn.failed') }
         : {
             ok: true,
@@ -78,13 +83,10 @@ export default function OptionsApp() {
     );
   };
 
-  useEffect(() => {
-    void probe(s);
-    // 최초 1회만. 이후는 사용자가 직접 '연결 확인'을 누른다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const patch = async (p: Partial<Settings>) => setS(await saveSettings(p));
+  const patch = async (p: Partial<Settings>) => {
+    try { setS(await saveSettings(p)); }
+    catch (error) { setConn({ ok: false, text: String(error) }); }
+  };
 
   const budgetTtfb = estimateTtfbSeconds(s.pageTokenBudget + 300);
   const ctxFullTtfb = estimateTtfbSeconds(s.numCtx);
@@ -110,7 +112,8 @@ export default function OptionsApp() {
               id="endpoint"
               type="text"
               value={s.endpoint}
-              onChange={(e) => patch({ endpoint: e.target.value })}
+              onChange={(e) => setS(current => ({ ...current, endpoint: e.target.value }))}
+              onBlur={(e) => void patch({ endpoint: e.target.value })}
             />
           </div>
           <p className="desc">{t('opt.conn.endpointDesc')}</p>
@@ -120,7 +123,7 @@ export default function OptionsApp() {
           <div className="row">
             <label htmlFor="model">{t('opt.conn.model')}</label>
             <select id="model" value={s.model} onChange={(e) => patch({ model: e.target.value })}>
-              {models.length === 0 && <option value={s.model}>{s.model}</option>}
+              {!models.some(m => m.name === s.model) && <option value={s.model}>{s.model}</option>}
               {models
                 .filter((m) => !m.capabilities?.includes('embedding'))
                 .map((m) => (
@@ -146,7 +149,7 @@ export default function OptionsApp() {
               value={s.embedModel}
               onChange={(e) => patch({ embedModel: e.target.value })}
             >
-              {models.length === 0 && <option value={s.embedModel}>{s.embedModel}</option>}
+              {!models.some(m => m.name === s.embedModel) && <option value={s.embedModel}>{s.embedModel}</option>}
               {models
                 .filter((m) => m.capabilities?.includes('embedding'))
                 .map((m) => (
@@ -433,7 +436,8 @@ export default function OptionsApp() {
         <button
           className="btn"
           onClick={async () => {
-            setS(await resetSettings());
+            try { const settings = await resetSettings(); setS(settings); setLocale(settings.locale); void probe(settings); }
+            catch (error) { setConn({ ok: false, text: String(error) }); }
           }}
         >
           {t('opt.reset')}

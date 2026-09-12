@@ -1,3 +1,4 @@
+import { abortable, deadlineSignal } from '@/lib/async';
 /**
  * 오류 분류. 계획서 §5 Phase 1-8 / §6 완료 기준
  *
@@ -96,15 +97,17 @@ export async function classifyResponse(res: Response): Promise<OllamaError> {
  * 성공했는지는 알려준다.** 그것만으로 DOWN과 CORS_BLOCKED가 갈린다.
  */
 export async function isServerReachable(endpoint: string): Promise<boolean> {
+  const guard = deadlineSignal(3000);
   try {
-    await fetch(`${endpoint}/api/version`, {
+    await abortable(fetch(`${endpoint}/api/version`, {
       mode: 'no-cors',
       cache: 'no-store',
-    });
+      signal: guard.signal,
+    }), guard.signal);
     return true;
   } catch {
     return false;
-  }
+  } finally { guard.dispose(); }
 }
 
 /** fetch 실패를 DOWN / CORS_BLOCKED 중 하나로 확정한다. */

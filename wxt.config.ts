@@ -11,6 +11,7 @@ export default defineConfig({
   }),
 
   manifest: {
+    minimum_chrome_version: '116',
     // ★ __MSG_*__ 는 public/_locales/{ko,en}/messages.json 에서 온다.
     //   이 필드들은 크롬이 스토어·확장 관리 화면에 직접 그리므로 우리 i18n
     //   모듈이 아니라 chrome.i18n 규약을 따라야 한다.

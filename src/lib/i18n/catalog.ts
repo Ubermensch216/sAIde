@@ -27,7 +27,7 @@ const ko = {
   /* ── 오류 (lib/errors/describe.ts) ── */
   'err.down.title': 'Ollama가 실행 중이 아닙니다',
   'err.down.body':
-    'Ollama를 시작한 뒤 다시 시도하세요. sAIde는 인터넷이 아니라 이 컴퓨터의 Ollama에 연결합니다.',
+    '설정한 주소의 Ollama를 시작한 뒤 다시 시도하세요. 기본 연결 주소는 이 컴퓨터의 localhost입니다.',
   'err.cors.title': 'Ollama가 확장의 요청을 거부하고 있습니다',
   'err.cors.body':
     '아래 명령을 PowerShell에서 실행한 뒤, 트레이의 Ollama를 완전히 종료했다가 다시 시작하세요.',
@@ -71,7 +71,7 @@ const ko = {
   'panel.conversations': '대화 목록',
   'panel.empty.ready': '무엇을 도와드릴까요?',
   'panel.empty.readyBody':
-    '이 컴퓨터 안에서만 도는 AI 조력자입니다. 대화 내용은 밖으로 나가지 않습니다.',
+    '설정한 Ollama 모델로 돕는 AI 조력자입니다. 기본값은 이 컴퓨터의 로컬 서버입니다.',
   'panel.empty.body': '내 컴퓨터에서만 도는 AI 브라우저 조력자. 인터넷 없이 작동합니다.',
   'panel.generating': '생성 중',
   'panel.readingPage': '페이지 읽는 중',
@@ -134,6 +134,7 @@ const ko = {
   /* ── 대화 목록 ── */
   'conv.empty': '저장된 대화가 없습니다.',
   'conv.deleteOne': '{title} 삭제',
+  'conv.confirmDelete': '“{title}” 대화를 삭제할까요? 삭제 후 복구할 수 없습니다.',
   'conv.localHost': '로컬',
   'conv.unknownHost': '알 수 없음',
   'conv.justNow': '방금',
@@ -159,7 +160,7 @@ const ko = {
   'mem.h': '기억',
   'mem.enable': '읽은 페이지 기억하기',
   'mem.enableDesc':
-    '읽은 페이지를 이 컴퓨터에 저장해 두었다가 나중에 찾아볼 수 있게 합니다. 임베딩도 Ollama가 만들므로 내용은 밖으로 나가지 않습니다.',
+    '읽은 페이지를 이 컴퓨터에 저장해 나중에 찾아봅니다. 임베딩할 본문은 설정한 Ollama 서버로 전송하므로, 원격 주소를 사용하면 그 서버에도 전달됩니다.',
   'mem.scopeDesc':
     'sAIde가 **실제로 읽은 페이지만** 기억합니다. 그냥 방문한 페이지는 기억하지 않습니다 — 모든 페이지를 들여다보려면 상시 접근 권한이 필요한데, 그렇게 만들지 않았습니다.',
   'mem.stored': '저장된 기억',
@@ -168,7 +169,7 @@ const ko = {
   'mem.retention': '보관 기간',
   'mem.retention.days': '{n}일',
   'mem.retention.forever': '계속 보관',
-  'mem.retentionDesc': '기간이 지난 기억은 패널을 열 때 자동으로 지워집니다.',
+  'mem.retentionDesc': '기간이 지난 기억은 검색에서 제외하고, 기억을 켠 상태로 패널을 열 때 지웁니다.',
   'mem.excluded': '기억하지 않을 도메인',
   'mem.excludedPlaceholder': '예: bank.co.kr',
   'mem.excludedDesc':
@@ -226,7 +227,7 @@ const ko = {
 
   'opt.conn.h': '연결',
   'opt.conn.endpoint': 'Ollama 엔드포인트',
-  'opt.conn.endpointDesc': '이 컴퓨터의 Ollama 주소입니다. 외부로는 어떤 요청도 나가지 않습니다.',
+  'opt.conn.endpointDesc': '기본값은 이 컴퓨터의 Ollama입니다. 원격 주소를 입력하면 대화·첨부·임베딩 요청이 해당 서버로 전송됩니다.',
   'opt.conn.model': '모델',
   'opt.conn.check': '연결 확인',
   'opt.conn.failed': '연결 실패',
@@ -241,7 +242,7 @@ const ko = {
   'opt.perf.think.agent': '에이전트에서만 (권장)',
   'opt.perf.think.always': '항상 켜기',
   'opt.perf.thinkDesc':
-    '모델이 답하기 전에 생각을 적는 기능입니다. 정확도가 오르지만 이 컴퓨터에서는 응답이 **약 6배 느려집니다**. 툴을 쓰는 작업에서만 켜는 편이 좋습니다.',
+    '모델이 답하기 전에 생각을 적는 기능입니다. 개발 당시 CPU 실험에서는 응답이 **약 6배 느렸습니다**. 속도와 정확도는 모델·장비·질문에 따라 달라집니다.',
   'opt.perf.budget': '페이지 본문 분량',
   'opt.perf.budgetVal': '{n} 토큰',
   'opt.perf.budgetCost': '한국어 약 {chars}자 · 답변 시작까지 약 **{sec}초**',
@@ -283,7 +284,7 @@ const ko = {
     'sAIde는 설치할 때 어떤 사이트 권한도 갖지 않습니다. "이 페이지 요약" 같은 기능을 처음 쓸 때 그 사이트에 한해 권한을 요청합니다. 아래에서 한 번에 허용하거나 언제든 회수할 수 있습니다.',
   'opt.access.all': '모든 사이트에서 허용',
   'opt.access.allDesc':
-    '켜면 사이트마다 묻지 않습니다. 페이지 내용은 여전히 이 컴퓨터 밖으로 나가지 않습니다.',
+    '켜면 사이트마다 묻지 않습니다. 읽거나 첨부한 내용은 설정한 Ollama 서버에서 처리합니다.',
   'opt.access.captureDesc':
     '**화면 캡처 기능은 이 권한이 반드시 필요합니다.** 크롬이 캡처에 한해 사이트별 권한을 받아주지 않기 때문입니다. 본문 읽기는 사이트별 권한만으로 동작합니다.',
   'opt.access.granted': '허용된 사이트',
@@ -302,7 +303,7 @@ const ko = {
 
   'opt.reset': '기본값으로 되돌리기',
   'opt.resetDesc':
-    '기본값은 이 컴퓨터에서 실제로 측정한 성능(프리필 {rate} tok/s)에 맞춰 정해져 있습니다.',
+    '기본값과 대기시간 예측은 개발 당시 CPU 측정(프리필 {rate} tok/s) 기준입니다. 현재 장비의 보장값은 아닙니다.',
 
   /* ── 성능 대시보드 ── */
   'perf.h': '성능 기록',
@@ -409,7 +410,7 @@ const en = {
   'panel.conversations': 'Conversations',
   'panel.empty.ready': 'How can I help?',
   'panel.empty.readyBody':
-    'An AI aide that runs entirely on this computer. Your conversations never leave it.',
+    'An AI aide using your configured Ollama model. The default is a local server on this computer.',
   'panel.empty.body': 'An AI browser aide that runs on your machine. Works without internet.',
   'panel.generating': 'Generating',
   'panel.readingPage': 'Reading the page',
@@ -468,6 +469,7 @@ const en = {
 
   'conv.empty': 'No saved conversations.',
   'conv.deleteOne': 'Delete {title}',
+  'conv.confirmDelete': 'Delete “{title}”? This cannot be undone.',
   'conv.localHost': 'local',
   'conv.unknownHost': 'unknown',
   'conv.justNow': 'just now',
@@ -492,7 +494,7 @@ const en = {
   'mem.h': 'Memory',
   'mem.enable': 'Remember pages I read',
   'mem.enableDesc':
-    'Keeps pages you had sAIde read on this computer so you can find them later. Ollama makes the embeddings too, so nothing leaves your machine.',
+    'Stores pages on this computer for later search. Text for embeddings is sent to your configured Ollama server, including a remote server if you choose one.',
   'mem.scopeDesc':
     'Only pages sAIde **actually read** are remembered. Pages you merely visited are not — seeing every page would require standing access, and this extension does not ask for it.',
   'mem.stored': 'Stored',
@@ -501,7 +503,7 @@ const en = {
   'mem.retention': 'Keep for',
   'mem.retention.days': '{n} days',
   'mem.retention.forever': 'Keep indefinitely',
-  'mem.retentionDesc': 'Entries past this age are removed when the panel opens.',
+  'mem.retentionDesc': 'Expired entries are excluded from search and removed when the panel opens with memory enabled.',
   'mem.excluded': 'Domains never to remember',
   'mem.excludedPlaceholder': 'e.g. bank.com',
   'mem.excludedDesc':
@@ -557,7 +559,7 @@ const en = {
 
   'opt.conn.h': 'Connection',
   'opt.conn.endpoint': 'Ollama endpoint',
-  'opt.conn.endpointDesc': 'Your local Ollama address. No request ever leaves this computer.',
+  'opt.conn.endpointDesc': 'Defaults to local Ollama. A remote address sends conversations, attachments and embedding requests to that server.',
   'opt.conn.model': 'Model',
   'opt.conn.check': 'Check connection',
   'opt.conn.failed': 'Connection failed',
@@ -572,7 +574,7 @@ const en = {
   'opt.perf.think.agent': 'Agent only (recommended)',
   'opt.perf.think.always': 'Always on',
   'opt.perf.thinkDesc':
-    'Lets the model write out its reasoning first. Accuracy improves, but on this computer replies get **about 6x slower**. Best kept for tool-using work.',
+    'Lets the model write its reasoning first. A development CPU experiment was **about 6x slower**. Speed and accuracy depend on the model, hardware and question.',
   'opt.perf.budget': 'Page text budget',
   'opt.perf.budgetVal': '{n} tokens',
   'opt.perf.budgetCost': 'about {chars} characters · first token in about **{sec}s**',
@@ -614,7 +616,7 @@ const en = {
     'sAIde installs with no site access at all. The first time you use something like "Summarize this page", it asks for that one site. You can grant everything at once below, or revoke any of it at any time.',
   'opt.access.all': 'Allow on all sites',
   'opt.access.allDesc':
-    'Stops the per-site prompts. Page content still never leaves this computer.',
+    'Stops the per-site prompts. Content you read or attach is processed by your configured Ollama server.',
   'opt.access.captureDesc':
     '**Screen capture requires this permission.** Chrome will not grant capture on a per-site basis. Reading page text works with per-site access alone.',
   'opt.access.granted': 'Allowed sites',
@@ -633,7 +635,7 @@ const en = {
 
   'opt.reset': 'Restore defaults',
   'opt.resetDesc':
-    'Defaults are tuned to performance actually measured on this computer (prefill {rate} tok/s).',
+    'Defaults and time estimates use a development CPU baseline ({rate} prefill tok/s), not a guarantee for your current hardware.',
 
   /* ── Performance dashboard ── */
   'perf.h': 'Performance record',

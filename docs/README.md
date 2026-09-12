@@ -8,6 +8,7 @@
 | 설계 검토자 | [현재 아키텍처](ARCHITECTURE.md), [프로젝트 분석](PROJECT_REVIEW.md) |
 | 개발자 | [구현 계획](../plan/saide-implementation-plan.md), [검증 기록](VALIDATION.md) |
 | 제품 담당자 | [제품 계획](../plan/saideplan.md) |
+| 시스템 보완 검토 | [실행 결과·잔여 작업](../plan/system-hardening.md) |
 | 수동 QA | [도구 점검표](../plan/phase5-tool-checklist.md) |
 | 문서 유지보수 | [스크린샷 재현](screenshots/README.md), `preview/` |
 | 디자인·배포 | [브랜드 시트](../brand/saide-brand-sheet.html), [스토어 자산 안내](../brand/store/README.md) |
@@ -21,4 +22,4 @@
 - 샘플 데이터를 쓰는 캡처는 예시로 표시하고 실제 확장 캡처와 구분한다.
 - 기존 계획서의 과거 내용은 Git 이력에 남는다. 현재 문서에는 구현·미완료·이번 검증 여부를 분리한다.
 
-이번 갱신 범위는 프로젝트가 작성한 Markdown 문서 전체 및 HTML 브랜드 시트의 파일 목록·현황이다. `node_modules`의 외부 패키지 문서, 생성 산출물, 소스 코드 주석은 제품 문서 갱신 대상에서 제외했다. 외부 패키지 문서가 Git에 추적되고 있는 문제는 R11에 기록했다.
+문서 갱신 후 시스템 코드 보완도 수행했다. 현재 구현은 개선 보고서·실행 계획·검증 기록을 함께 확인한다. 외부 패키지 문서와 생성 산출물은 제품 문서 갱신 대상에서 제외한다. node_modules의 Git 추적은 R11 보완으로 해제했다.

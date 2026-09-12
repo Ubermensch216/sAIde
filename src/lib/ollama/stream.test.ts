@@ -110,9 +110,9 @@ describe('consumeLine', () => {
     expect(c.tokens).toEqual([]);
   });
 
-  it('깨진 JSON에서 예외를 던지지 않는다 (스트림 전체를 죽이면 안 된다)', () => {
+  it('깨진 JSON을 성공한 응답으로 취급하지 않는다', () => {
     const c = collector();
-    expect(() => consumeLine('{"message":{"cont', c.handlers, () => {})).not.toThrow();
+    expect(() => consumeLine('{"message":{"cont', c.handlers, () => {})).toThrow();
     expect(c.tokens).toEqual([]);
   });
 });

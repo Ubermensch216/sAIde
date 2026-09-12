@@ -1,3 +1,4 @@
+import { abortable, deadlineSignal } from '@/lib/async';
 /**
  * Ollama HTTP 클라이언트. 계획서 §5 Phase 1-7 / 2-7
  *
@@ -16,23 +17,26 @@ import { t } from '@/lib/i18n';
 import type { AppError } from '@/lib/messaging/protocol';
 import {
   OllamaError,
+  classifyResponse,
   pullCommand,
   refineConnectionError,
 } from './errors';
 import { streamChat } from './stream';
 
-async function getJson<T>(endpoint: string, path: string): Promise<T> {
-  let res: Response;
+export async function requestJson<T>(endpoint: string, path: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<T> {
+  const guard = deadlineSignal(timeoutMs, init.signal ?? undefined);
   try {
-    res = await fetch(`${endpoint}${path}`, { cache: 'no-store' });
-  } catch (e) {
-    throw await refineConnectionError(endpoint, e);
-  }
-  if (!res.ok) {
-    throw new OllamaError('UNKNOWN', `${path} 실패 (HTTP ${res.status})`);
-  }
-  return (await res.json()) as T;
+    const res = await abortable(fetch(`${endpoint}${path}`, { ...init, cache: 'no-store', signal: guard.signal }), guard.signal);
+    if (!res.ok) throw await abortable(classifyResponse(res), guard.signal);
+    return await abortable(res.json(), guard.signal) as T;
+  } catch (error) {
+    if (guard.signal.aborted) throw new OllamaError(init.signal?.aborted ? 'ABORTED' : 'TIMEOUT', init.signal?.aborted ? '요청을 중단했습니다.' : '서버 응답 시간이 초과되었습니다.');
+    if (error instanceof OllamaError) throw error;
+    if (error instanceof SyntaxError) throw new OllamaError('UNKNOWN', '서버의 JSON 응답이 올바르지 않습니다.');
+    throw await refineConnectionError(endpoint, error);
+  } finally { guard.dispose(); }
 }
+const getJson = <T>(endpoint: string, path: string) => requestJson<T>(endpoint, path);
 
 export async function getVersion(endpoint: string): Promise<string> {
   const v = await getJson<{ version: string }>(endpoint, '/api/version');
@@ -41,7 +45,16 @@ export async function getVersion(endpoint: string): Promise<string> {
 
 export async function listModels(endpoint: string): Promise<ModelInfo[]> {
   const tags = await getJson<TagsResponse>(endpoint, '/api/tags');
-  return tags.models ?? [];
+  const models = tags.models ?? [];
+  // Limit concurrency when old servers omit capability metadata.
+  for (let i = 0; i < models.length; i += 4) {
+    await Promise.all(models.slice(i, i + 4).map(async model => {
+      if (model.capabilities?.length) return;
+      try { model.capabilities = (await showModel(endpoint, model.name)).capabilities; }
+      catch { /* retain the model as unknown; explicit feature checks fail closed */ }
+    }));
+  }
+  return models;
 }
 
 export async function listRunning(endpoint: string): Promise<PsResponse['models']> {
@@ -53,25 +66,16 @@ export async function listRunning(endpoint: string): Promise<PsResponse['models'
 export async function showModel(
   endpoint: string,
   model: string,
+  signal?: AbortSignal,
 ): Promise<ModelInfo & { capabilities?: string[] }> {
-  let res: Response;
-  try {
-    res = await fetch(`${endpoint}/api/show`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model }),
-    });
-  } catch (e) {
-    throw await refineConnectionError(endpoint, e);
-  }
-  if (!res.ok) {
-    throw new OllamaError(
-      'MODEL_MISSING',
-      `모델 '${model}' 정보를 가져오지 못했습니다.`,
-      pullCommand(model),
-    );
-  }
-  return (await res.json()) as ModelInfo & { capabilities?: string[] };
+  return requestJson(endpoint, '/api/show', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }), signal });
+}
+
+export async function requireCapabilities(endpoint: string, model: string, required: string[], signal?: AbortSignal): Promise<void> {
+  if (!required.length) return;
+  const info = await showModel(endpoint, model, signal);
+  const missing = required.filter(feature => !info.capabilities?.includes(feature));
+  if (missing.length) throw new OllamaError('UNKNOWN', `선택한 모델의 ${missing.join(', ')} 기능을 확인할 수 없습니다.`, '설정에서 해당 기능을 지원하는 모델을 선택하세요.');
 }
 
 /**
@@ -85,19 +89,12 @@ export async function embed(
   model: string,
   input: string | string[],
   keepAlive: string = '2m',
+  signal?: AbortSignal,
 ): Promise<number[][]> {
-  let res: Response;
-  try {
-    res = await fetch(`${endpoint}/api/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input, keep_alive: keepAlive }),
-    });
-  } catch (e) {
-    throw await refineConnectionError(endpoint, e);
-  }
-  if (!res.ok) throw new OllamaError('UNKNOWN', t('err.embedFailed', { status: res.status }));
-  const json = (await res.json()) as EmbedResponse;
+  const json = await requestJson<EmbedResponse>(endpoint, '/api/embed', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, input, keep_alive: keepAlive }), signal,
+  }, 180_000);
   return json.embeddings ?? [];
 }
 
@@ -146,7 +143,8 @@ export async function checkHealth(
     };
   }
 
-  const has = models.some((m) => m.name === model || m.model === model);
+  const sameModel = (name: string) => (name.includes(':') ? name : `${name}:latest`) === (model.includes(':') ? model : `${model}:latest`);
+  const has = models.some((m) => sameModel(m.name) || sameModel(m.model));
   if (!has) {
     return {
       ...empty,
@@ -165,7 +163,7 @@ export async function checkHealth(
   let onGpu = false;
   try {
     const running = await listRunning(endpoint);
-    const hit = running.find((m) => m.name === model || m.model === model);
+    const hit = running.find((m) => sameModel(m.name) || sameModel(m.model));
     resident = Boolean(hit);
     // size_vram > 0 이면 일부라도 GPU에 올라간 것.
     onGpu = (hit?.size_vram ?? 0) > 0;

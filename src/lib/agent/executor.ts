@@ -11,16 +11,23 @@
  */
 
 import { t } from '@/lib/i18n';
-import { isRestrictedUrl, sendToSW } from '@/lib/messaging/protocol';
+import { isRestrictedUrl, requiresApproval, sendToSW } from '@/lib/messaging/protocol';
 import type { ActionResult, AppError, TabSummary } from '@/lib/messaging/protocol';
 import type { ToolOutcome } from './loop';
-import { isPageAction, type AgentAction } from './tools';
+import { isPageAction, signatureOf, type AgentAction } from './tools';
 
 /** 모델에게 돌려줄 탭 목록의 상한. 20개를 넘기면 프리필만 비싸진다. */
 const MAX_TABS = 20;
 
-export function createExecutor(getTabId: () => number) {
-  return async function execute(action: AgentAction): Promise<ToolOutcome> {
+export function createBrowserTools(getTabId: () => number, getUrl: () => string) {
+  const approvals = new Map<string, string>();
+  return { execute: createExecutor(getTabId, getUrl, approvals), describeTarget: createTargetDescriber(getTabId, getUrl, approvals) };
+}
+
+export function createExecutor(getTabId: () => number, getUrl = () => '', approvals = new Map<string, string>()) {
+  return async function execute(action: AgentAction, signal?: AbortSignal): Promise<ToolOutcome> {
+    signal?.throwIfAborted();
+    const control = { id: '', deadline: 0, expectedUrl: getUrl() || undefined };
     const tabId = getTabId();
     if (tabId < 0) {
       return { ok: false, detail: t('exec.noTab') };
@@ -28,14 +35,14 @@ export function createExecutor(getTabId: () => number) {
 
     switch (action.kind) {
       case 'list_tabs': {
-        const res = await sendToSW({ type: 'LIST_TABS' });
+        const res = await sendToSW({ type: 'LIST_TABS' }, signal);
         if (res.type === 'ERROR') return fail(res.error);
         if (res.type !== 'TABS') return { ok: false, detail: t('exec.tabsFailed') };
         return { ok: true, detail: formatTabs(res.tabs) };
       }
 
       case 'screenshot': {
-        const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId });
+        const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId, control }, signal);
         if (res.type === 'ERROR') return fail(res.error);
         if (res.type !== 'SCREENSHOT') return { ok: false, detail: t('exec.captureFailed') };
         return {
@@ -48,7 +55,10 @@ export function createExecutor(getTabId: () => number) {
 
       default: {
         if (!isPageAction(action)) return { ok: false, detail: t('exec.unknownAction') };
-        const res = await sendToSW({ type: 'EXEC_ACTION', tabId, action });
+        const approvalToken = approvals.get(signatureOf(action));
+        approvals.delete(signatureOf(action));
+        if (requiresApproval(action) && !approvalToken) return { ok: false, detail: '대상 확인과 승인이 필요합니다. 다시 요청하세요.' };
+        const res = await sendToSW({ type: 'EXEC_ACTION', tabId, action, control: { ...control, approvalToken } }, signal);
         if (res.type === 'ERROR') return fail(res.error);
         if (res.type !== 'ACTION_RESULT') return { ok: false, detail: t('exec.actionFailed') };
         return { ok: res.result.ok, detail: renderResult(res.result) };
@@ -63,20 +73,16 @@ export function createExecutor(getTabId: () => number) {
  * ★ 부작용이 없는 조회다. 승인 **전에** 부르는 유일한 페이지 접근이며,
  *   사용자가 "무엇을 클릭하는지" 보고 판단할 수 있게 하는 근거다(§7).
  */
-export function createTargetDescriber(getTabId: () => number) {
-  return async function describeTarget(action: AgentAction): Promise<string | undefined> {
-    if (action.kind !== 'click' && action.kind !== 'type_text') return undefined;
-    const tabId = getTabId();
-    if (tabId < 0) return undefined;
-
-    const res = await sendToSW({
-      type: 'EXEC_ACTION',
-      tabId,
-      action: { kind: 'describe_target', selector: action.selector },
-    });
-    // 승인 카드에는 문장이 아니라 요소 설명 자체가 들어간다.
-    if (res.type === 'ACTION_RESULT' && res.result.ok) return res.result.vars?.target;
-    return undefined;
+export function createTargetDescriber(getTabId: () => number, getUrl = () => '', approvals = new Map<string, string>()) {
+  return async function describeTarget(action: AgentAction, signal?: AbortSignal): Promise<string | undefined> {
+    if (!isPageAction(action) || !requiresApproval(action)) return undefined;
+    approvals.delete(signatureOf(action));
+    const res = await sendToSW({ type: 'PREPARE_ACTION', tabId: getTabId(), action,
+      control: { id: '', deadline: 0, expectedUrl: getUrl() || undefined },
+    }, signal);
+    if (res.type !== 'ACTION_PREPARED') throw new Error(res.type === 'ERROR' ? res.error.message : '대상을 확인할 수 없습니다.');
+    approvals.set(signatureOf(action), res.token);
+    return res.label;
   };
 }
 

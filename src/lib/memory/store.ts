@@ -50,6 +50,25 @@ function table() {
   return db.table<PageVector, number>('pageVectors');
 }
 
+export interface MemoryControl {
+  id: 'policy'; epoch: number; enabled?: boolean; excluded?: string[];
+}
+const policyTable = () => db.table<MemoryControl, string>('memoryControl');
+export async function memoryEpoch(): Promise<number> { return (await policyTable().get('policy'))?.epoch ?? 0; }
+
+/** Serialized in IndexedDB across all extension documents, including a panel closing mid-embed. */
+export async function updateMemoryPolicy(patch: { enabled?: boolean; excluded?: string[] } = {}): Promise<void> {
+  await db.transaction('rw', policyTable(), async () => {
+    const old = await policyTable().get('policy');
+    await policyTable().put({ ...old, ...patch, id: 'policy', epoch: (old?.epoch ?? 0) + 1 });
+  });
+}
+function domainMatches(host: string, raw: string): boolean {
+  const domain = raw.trim().toLowerCase().replace(/^\.+/, '').replace(/\.$/, '');
+  const normalizedHost = host.toLowerCase().replace(/\.$/, '');
+  return !!domain && (normalizedHost === domain || normalizedHost.endsWith(`.${domain}`));
+}
+
 /* ── 조각내기 ──────────────────────────────────────────── */
 
 /**
@@ -99,6 +118,7 @@ export function chunkText(text: string, chunkTokens = CHUNK_TOKENS, max = MAX_CH
  * 길이 1로 맞춘다. 영벡터는 그대로 둔다 — 0으로 나누느니 유사도 0이 낫다.
  */
 export function normalize(v: number[] | Float32Array): Float32Array {
+  if (!v.length || [...v].some(n => !Number.isFinite(n))) return new Float32Array(0);
   const out = new Float32Array(v.length);
   let sum = 0;
   for (let i = 0; i < v.length; i++) sum += v[i]! * v[i]!;
@@ -110,7 +130,8 @@ export function normalize(v: number[] | Float32Array): Float32Array {
 
 /** 정규화된 벡터끼리의 코사인 유사도 = 내적. */
 export function dot(a: Float32Array, b: Float32Array): number {
-  const n = Math.min(a.length, b.length);
+  if (a.length !== b.length) return 0;
+  const n = a.length;
   let s = 0;
   for (let i = 0; i < n; i++) s += a[i]! * b[i]!;
   return s;
@@ -134,7 +155,11 @@ export interface SavePageInput {
  * ★ 덮어쓰는 이유: 같은 페이지를 두 번 읽으면 검색 결과가 그 페이지로
  *   가득 찬다. 게다가 내용이 바뀌었다면 옛 조각은 이미 틀린 정보다.
  */
-export async function savePage(input: SavePageInput): Promise<number> {
+export async function savePage(input: SavePageInput, expectedEpoch?: number, canSave = () => true): Promise<number> {
+  const dim = input.vectors[0]?.length ?? 0;
+  if (input.chunks.length !== input.vectors.length || (input.chunks.length && (!dim || input.vectors.some(v => v.length !== dim || v.some(n => !Number.isFinite(n)))))) {
+    throw new Error('유효하지 않은 임베딩 벡터입니다.');
+  }
   const visitedAt = input.visitedAt ?? Date.now();
   const rows = input.chunks.map((text, chunk) => ({
     url: input.url,
@@ -146,11 +171,14 @@ export async function savePage(input: SavePageInput): Promise<number> {
     visitedAt,
   })) as PageVector[];
 
-  await db.transaction('rw', table(), async () => {
+  return db.transaction('rw', table(), policyTable(), async () => {
+    const policy = await policyTable().get('policy');
+    if (expectedEpoch !== undefined && ((policy?.epoch ?? 0) !== expectedEpoch || policy?.enabled === false || !shouldRemember(input.url, policy?.excluded ?? []))) return 0;
+    if (!canSave()) return 0;
     await table().where('url').equals(input.url).delete();
     if (rows.length) await table().bulkAdd(rows);
+    return rows.length;
   });
-  return rows.length;
 }
 
 /* ── 검색 ──────────────────────────────────────────────── */
@@ -176,6 +204,7 @@ export async function search(
   queryVector: number[] | Float32Array,
   limit = 5,
   model?: string,
+  policy: { retentionDays?: number; excluded?: string[]; minScore?: number } = {},
 ): Promise<SearchHit[]> {
   const q = normalize(queryVector);
   // ★ 영벡터는 "빈 질의"다. 길이만 보면 0으로 채워진 벡터를 놓치고, 그러면
@@ -186,7 +215,10 @@ export async function search(
   await table().each((row) => {
     // 다른 모델로 만든 벡터와는 비교하지 않는다. 좌표계가 다르다.
     if (model && row.model !== model) return;
+    if (row.vector.length !== q.length || !shouldRemember(row.url, policy.excluded ?? [])) return;
+    if (policy.retentionDays && row.visitedAt < Date.now() - policy.retentionDays * 86_400_000) return;
     const score = dot(q, row.vector);
+    if (!Number.isFinite(score) || score < (policy.minScore ?? -1)) return;
     const prev = best.get(row.url);
     if (!prev || score > prev.score) {
       best.set(row.url, {
@@ -216,15 +248,17 @@ export async function prune(retentionDays: number, now = Date.now()): Promise<nu
 
 /** 특정 도메인의 기록을 지운다. 제외 목록에 추가할 때 함께 부른다. */
 export async function forgetDomain(domain: string): Promise<number> {
-  const rows = await table().toArray();
-  const ids = rows.filter((r) => hostOf(r.url) === domain).map((r) => r.id);
-  await table().bulkDelete(ids);
-  return ids.length;
+  return db.transaction('rw', table(), policyTable(), async () => {
+    await updateMemoryPolicy();
+    return table().filter(r => domainMatches(hostOf(r.url), domain)).delete();
+  });
 }
 
-/** 전량 삭제 (6-4). */
 export async function clearAll(): Promise<void> {
-  await table().clear();
+  await db.transaction('rw', table(), policyTable(), async () => {
+    await updateMemoryPolicy();
+    await table().clear();
+  });
 }
 
 export interface MemoryStats {
@@ -267,11 +301,7 @@ export function shouldRemember(url: string, excluded: string[]): boolean {
   if (!host) return false;
   if (!/^https?:$/.test(safeProtocol(url))) return false;
 
-  return !excluded.some((raw) => {
-    const d = raw.trim().toLowerCase().replace(/^\.+/, '');
-    if (!d) return false;
-    return host === d || host.endsWith(`.${d}`);
-  });
+  return !excluded.some(raw => domainMatches(host, raw));
 }
 
 function safeProtocol(url: string): string {

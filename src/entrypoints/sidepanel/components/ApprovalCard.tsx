@@ -19,7 +19,8 @@
  */
 
 import { useT } from '@/lib/i18n';
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import type { ApprovalRequest } from '@/lib/messaging/protocol';
 
 interface Props {
@@ -29,25 +30,11 @@ interface Props {
 
 export function ApprovalCard({ request, onDecide }: Props) {
   const t = useT();
-  const denyRef = useRef<HTMLButtonElement>(null);
-
-  // 거부에 포커스를 둔다. Enter를 습관적으로 치는 사용자가 승인하게 두지 않는다.
-  useEffect(() => denyRef.current?.focus(), [request]);
-
-  // Esc = 거부. 승인 단축키는 만들지 않는다.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onDecide(false);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onDecide]);
+  const dialog = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialog, () => onDecide(false));
 
   return (
-    <div className="approval" role="alertdialog" aria-modal="true" aria-label={t('agent.approval.title')}>
+    <div ref={dialog} className="approval" role="alertdialog" aria-modal="true" aria-label={t('agent.approval.title')}>
       <div className="approval-head">
         <ShieldIcon />
         <span>{t('agent.approval.ask')}</span>
@@ -71,7 +58,7 @@ export function ApprovalCard({ request, onDecide }: Props) {
       </dl>
 
       <div className="approval-actions">
-        <button ref={denyRef} className="btn-deny" onClick={() => onDecide(false)}>
+        <button className="btn-deny" onClick={() => onDecide(false)}>
           {t('agent.approval.deny')}
         </button>
         <button className="btn-allow" onClick={() => onDecide(true)}>

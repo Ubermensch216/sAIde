@@ -3,6 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": { "node": ">=24 <25", "npm": ">=11 <12" },
+  "packageManager": "npm@11.16.0",
   "description": "sAIde — 옆에서 돕는 AI. 로컬 LLM 기반 브라우저 조력자.",
   "scripts": {
     "dev": "wxt",

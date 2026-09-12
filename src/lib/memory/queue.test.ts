@@ -124,6 +124,7 @@ describe('처리', () => {
       'bge-m3',
       expect.any(Array),
       '0',
+      expect.any(AbortSignal),
     );
     q.stop();
   });

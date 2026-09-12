@@ -58,6 +58,7 @@ class SaideDB extends Dexie {
       // Phase 6 (선택) — bge-m3 임베딩 1024-dim
       pageVectors: '++id, url, visitedAt',
     });
+    this.version(2).stores({ memoryControl: 'id' });
   }
 }
 
@@ -156,9 +157,12 @@ export async function listMessages(conversationId: number): Promise<StoredMessag
 export async function addMessage(
   msg: Omit<StoredMessage, 'id' | 'createdAt'> & { createdAt?: number },
 ): Promise<number> {
-  const id = await db.messages.add({ ...msg, createdAt: msg.createdAt ?? Date.now() });
-  await db.conversations.update(msg.conversationId, { updatedAt: Date.now() });
-  return id;
+  return db.transaction('rw', db.messages, db.conversations, async () => {
+    if (!(await db.conversations.get(msg.conversationId))) throw new Error('삭제된 대화에는 메시지를 저장할 수 없습니다.');
+    const id = await db.messages.add({ ...msg, createdAt: msg.createdAt ?? Date.now() });
+    await db.conversations.update(msg.conversationId, { updatedAt: Date.now() });
+    return id;
+  });
 }
 
 export async function updateMessage(

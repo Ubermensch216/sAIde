@@ -48,6 +48,30 @@ const seed: ChatMessage[] = [
   { role: 'user', content: '이 페이지 요약해줘' },
 ];
 
+it('signal을 무시하는 도구도 시간 초과 후 재시도 상한에서 끝난다', async () => {
+  vi.useFakeTimers();
+  try {
+    const { fn } = scriptedChat([turn('', [toolCall('read_page')])]);
+    const execute = vi.fn(() => new Promise<ToolOutcome>(() => {}));
+    const running = runAgentLoop(seed, deps({ chat: fn, execute }), { toolTimeoutMs: 100 });
+    await vi.advanceTimersByTimeAsync(250);
+    expect((await running).stopReason).toBe('tool-failed');
+    expect(execute).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});
+
+it('대상 설명이 영원히 대기해도 승인이나 실행으로 넘어가지 않는다', async () => {
+  vi.useFakeTimers();
+  try {
+    const { fn } = scriptedChat([turn('', [toolCall('click', { selector: '#go' })])]);
+    const approve = vi.fn(); const execute = vi.fn();
+    const running = runAgentLoop(seed, deps({ chat: fn, approve, execute, describeTarget: () => new Promise(() => {}) }));
+    await vi.advanceTimersByTimeAsync(15001);
+    expect((await running).stopReason).toBe('tool-failed');
+    expect(approve).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
 describe('정상 종료', () => {
   it('도구를 부르지 않으면 1턴으로 끝난다', async () => {
     const { fn } = scriptedChat([turn('바로 답합니다')]);
@@ -220,11 +244,11 @@ describe('승인 게이트 (Phase 5-3 / §7)', () => {
     );
   });
 
-  it('대상 확인이 실패해도 승인 절차는 그대로 진행한다', async () => {
+  it('대상 확인이 실패하면 승인과 실행을 진행하지 않는다', async () => {
     const { fn } = scriptedChat([turn('', [toolCall('click', { selector: '#x' })])]);
     const approve = vi.fn(async () => false);
 
-    await runAgentLoop(
+    const result = await runAgentLoop(
       seed,
       deps({
         chat: fn,
@@ -236,7 +260,8 @@ describe('승인 게이트 (Phase 5-3 / §7)', () => {
       { maxTurns: 1 },
     );
 
-    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve).not.toHaveBeenCalled();
+    expect(result.stopReason).toBe('tool-failed');
   });
 
   it('부작용이 없는 도구는 묻지 않는다', async () => {

@@ -521,9 +521,12 @@
 .conv-main {
   flex: 1;
   min-width: 0;
+  text-align: left;
+  color: inherit;
 }
 
 .conv-title {
+  display: block;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
@@ -532,6 +535,7 @@
 }
 
 .conv-meta {
+  display: block;
   font-size: 11px;
   color: var(--fg-muted);
   margin-top: 1px;
