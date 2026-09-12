@@ -1,119 +1,68 @@
-# 크롬 웹스토어 등록 자산
+# Chrome 웹스토어 등록 자산
 
-계획서 §5 Phase 7-7. 이 폴더는 **스토어 등록 화면에 그대로 붙여 넣을 것들**이다.
-확장 자체에는 포함되지 않는다.
+갱신: **2026-09-12**. 이 폴더는 제출 준비 자산이며 확장 번들에 포함되지 않는다. 실제 스토어 등록·공개 배포는 이번 작업에서 수행하지 않았다.
 
-## 들어 있는 것
+## 현재 파일
 
 | 파일 | 규격 | 용도 |
 |---|---|---|
-| `promo-small-440x280.png` | 440 × 280 | 목록 카드 (선택이지만 없으면 카드가 밋밋하다) |
-| `promo-marquee-1400x560.png` | 1400 × 560 | 추천 배너 (선택) |
-| 스토어 아이콘 | 128 × 128 | `public/icon/128.png` 을 그대로 올린다 |
+| [작은 홍보 이미지](promo-small-440x280.png) | 440 × 280 | 스토어 필수 작은 홍보 이미지 |
+| [마키 이미지](promo-marquee-1400x560.png) | 1400 × 560 | 선택 홍보 배너 |
+| [확장 아이콘](../../public/icon/128.png) | 128 × 128 | 확장/스토어 아이콘 |
+| [브랜드 시트](../saide-brand-sheet.html) | HTML | 로고·색상·사용 규칙 |
 
-`brand/` 의 워드마크·락업 SVG는 폰트가 패스로 변환돼 있으므로(7-5) 어디서 열어도
-같은 자형이 나온다. 타일 PNG도 같은 폰트(Inter 600/800 · Pretendard Medium)로
-그렸다.
+작은 홍보 이미지는 필수다. 과거 문서의 선택 자산이라는 설명을 정정했다. 로고 워드마크는 SVG 패스로 되어 있고 락업의 한글 태그라인은 라이브 텍스트이므로 폰트에 따라 달라질 수 있다. 기존 홍보 PNG의 생성 스크립트와 폰트 원본은 저장소에 없다.
 
-**타일은 먹배경(`#14121C`)이다.** 처음에는 브랜드 주색인 보라 그라디언트로
-만들었는데, 아이콘 배경이 같은 보라라 아이콘이 배경에 묻혔다. 로고가 안 보이는
-로고 타일은 쓸모가 없다. 흰 카드가 늘어선 스토어 목록에서는 먹배경이 오히려
-눈에 띈다.
+## 스크린샷과 등록 전 남은 작업
 
-## 아직 없는 것 — 스크린샷 (필수)
+[공식 이미지 안내](https://developer.chrome.com/docs/webstore/images)에 따르면 1280 × 800 또는 640 × 400 스크린샷을 최소 1장, 최대 5장 제공한다. 실제 사용자 경험을 보여주는 장면을 사용한다. 아이콘의 투명 여백과 작은 홍보 이미지 규격도 제출 시 재확인한다.
 
-크롬 웹스토어는 **1280 × 800 또는 640 × 400 스크린샷을 최소 1장** 요구한다.
-이것만은 만들어 둘 수 없다. **실제로 도는 확장을 찍은 것이어야 하기 때문이다.**
-합성한 화면을 스크린샷으로 올리는 것은 사용자를 속이는 일이다.
+[사용자 매뉴얼의 5장](../../docs/screenshots/README.md)은 실제 UI 컴포넌트와 샘플 데이터를 이용한 **문서용 캡처**다. 확장 설치·브라우저 권한·모델 응답을 증명하는 실확장 화면이 아니며 스토어 규격도 다르므로 그대로 제출용으로 간주하지 않는다.
 
-찍는 순서:
+제출 전 체크:
 
-1. `npm run build` 후 `chrome://extensions` → 개발자 모드 → `.output/chrome-mv3` 로드
-2. Ollama 실행 확인 (`ollama ps` 에 `gemma4:e2b` 가 떠 있어야 한다)
-3. 브라우저 창을 **1280 × 800** 으로 맞추고 사이드패널을 연다
-4. 아래 네 장면을 권한다 — 이 확장의 값이 드러나는 순서다
+- [ ] 별도 Chrome 테스트 프로필에 최신 production 빌드 설치.
+- [ ] 개인정보 없는 테스트 페이지의 요약과 후속 질문 실제 실행 캡처.
+- [ ] 승인 카드·실제 동작 결과, 설정, 선택 문장 기능 캡처.
+- [ ] 확장 ID/버전/모델/날짜와 원본 이미지 기록.
+- [ ] 제품 설명의 동작·권한·데이터 저장 범위를 실제 구현과 대조.
+- [ ] 공개 개인정보 처리방침 URL, 지원 연락처, 라이선스 준비.
+- [ ] [P1 개선 과제](../../docs/PROJECT_REVIEW.md)와 [브라우저 QA](../../plan/phase5-tool-checklist.md) 처리.
+- [ ] `npm run zip` 산출물 및 manifest 확인 후 제출.
 
-   | 장면 | 왜 |
-   |---|---|
-   | 긴 기사 페이지 요약 | 가장 흔한 첫 사용 |
-   | 승인 카드가 뜬 에이전트 동작 | 승인 게이트가 이 확장의 핵심 설계다 |
-   | 설정 화면의 성능 기록 | 비용을 숨기지 않는다는 태도가 보인다 |
-   | 우클릭 → "쉽게 설명" | 선택 텍스트 진입점 |
+## 등록용 설명 초안
 
-5. 스크린샷에 개인 정보가 담긴 탭·북마크가 찍히지 않는지 확인한다
+manifest 이름과 설명은 `public/_locales/ko/messages.json`, `public/_locales/en/messages.json`이 기준이다. 아래는 스토어 상세 설명 초안이며 공개 제출 전에 검토해야 한다.
 
-## 등록 화면에 넣을 문구
+### 한국어
 
-manifest 의 이름·설명은 `public/_locales/{ko,en}/messages.json` 이 단일 원본이다.
-스토어 목록에는 크롬이 그것을 그대로 쓰므로 여기서 따로 적지 않는다.
+sAIde는 내 컴퓨터의 Ollama 모델을 이용해 웹페이지 요약·번역·질문을 돕는 사이드패널 확장입니다. 선택한 문장을 설명하거나 다듬고, 지원 모델에서는 현재 화면을 설명할 수 있습니다.
 
-### 한 줄 설명 (132자 이내)
+에이전트는 페이지를 읽고 요소를 찾으며, 클릭·입력·이동은 사용자 승인을 거칩니다. 기억 기능을 켜면 sAIde에 읽힌 페이지의 일부를 로컬에 저장하고 나중에 검색할 수 있습니다.
 
-- **ko** — 내 컴퓨터에서만 도는 AI 브라우저 조력자. 인터넷 없이 작동합니다.
-- **en** — An AI browser aide that runs entirely on your machine. Works without internet.
+별도의 Ollama 설치와 모델 다운로드가 필요합니다. 기본 설정은 로컬 서버를 사용합니다. 원격 서버 주소를 설정하면 요청 데이터는 해당 서버로 전송됩니다. 웹페이지 탐색과 자막 수집에는 인터넷이 필요할 수 있습니다. 화면 캡처는 모든 사이트 접근 권한을 요청하며, 일반 본문 읽기는 사이트별로 허용할 수 있습니다.
 
-### 자세한 설명 (ko)
+### English
 
-```
-sAIde는 브라우저 옆에서 돕는 AI입니다. 페이지를 요약하고, 문장을 다듬고,
-필요하면 페이지를 직접 읽고 스크롤합니다.
+sAIde is a Chrome side panel that uses an Ollama model to summarize and translate pages, answer questions, and help explain or polish selected text. Models with vision support can also explain the visible page screenshot.
 
-다른 AI 확장과 다른 점은 하나입니다. 어떤 내용도 이 컴퓨터를 떠나지 않습니다.
+The agent can read pages and find elements. Clicking, typing, and navigation require your approval. Optional memory stores excerpts from pages you have shown to sAIde and lets you search them later.
 
-· 내 컴퓨터의 Ollama에 연결합니다. 외부 서버로 나가는 요청이 없습니다.
-· 인터넷이 끊겨 있어도 그대로 동작합니다.
-· 설치할 때 어떤 사이트 권한도 갖지 않습니다. 필요한 순간에 그 사이트만 요청합니다.
-· 클릭·입력·주소 이동은 매번 승인을 거칩니다. 자동 승인은 일부러 만들지
-  않았습니다 — 페이지에 숨겨진 지시문으로부터 지켜 주는 마지막 장치입니다.
-· 응답에 걸리는 시간을 미리 보여줍니다. 설정에서 분량을 늘리면 얼마나
-  느려지는지 숫자로 알려 드립니다.
+Ollama and downloaded models are required. The default endpoint is local; configuring a remote endpoint sends request data to that server. Browsing and caption retrieval may require internet access. Screenshot capture requests access to all sites; text extraction can use per-site permission.
 
-준비물: Ollama 와 모델 하나. 설정 화면이 연결 상태를 확인해 줍니다.
-```
+## 권한 사유
 
-### 자세한 설명 (en)
-
-```
-sAIde is an AI aide that works beside your browser. It summarizes pages,
-polishes your writing, and — when you ask — reads and scrolls the page itself.
-
-One thing sets it apart: nothing ever leaves your machine.
-
-· Talks to Ollama on your own computer. No request goes to an outside server.
-· Keeps working with the internet disconnected.
-· Installs with no site access at all, and asks for one site at the moment
-  it needs it.
-· Clicks, typing, and navigation always go through your approval. There is
-  deliberately no auto-approve — it is the last thing standing between you
-  and instructions hidden in a page.
-· Tells you what a request will cost in time, before you wait for it.
-
-You need Ollama and one model. The settings screen checks the connection.
-```
-
-## 권한 사유 (등록 시 항목별로 요구된다)
-
-| 권한 | 사유 |
+| 권한 | 실제 사용 |
 |---|---|
-| `sidePanel` | 이 확장의 화면 전체가 사이드패널이다. |
-| `activeTab` | 사용자가 "이 페이지 요약" 등을 누른 그 탭에서만 본문을 읽기 위해. |
-| `scripting` | 본문 추출·스크롤·클릭 스크립트를 그 순간에만 주입한다. 상시 주입하지 않는다. |
-| `storage` | 설정과 대화 기록을 이 컴퓨터에 저장한다. 동기화하지 않는다. |
-| `contextMenus` | 선택한 문장에 대한 번역·설명·다듬기 메뉴. |
-| `tabs` | 에이전트의 `list_tabs` 도구가 열린 탭 제목·주소를 읽는다. |
-| `host_permissions: localhost:11434` | 이 컴퓨터의 Ollama. 확장이 설치 시점에 갖는 유일한 접근권이다. |
-| `optional_host_permissions: <all_urls>` | 설치 시점에는 부여되지 않는다. 사용자가 페이지 기능을 처음 쓸 때 해당 사이트만, 또는 설정에서 명시적으로 전체를 허용할 때만 받는다. 화면 캡처는 크롬이 사이트별 권한을 인정하지 않아 이 권한이 있어야 동작한다. |
+| sidePanel | 주 사용자 인터페이스 |
+| activeTab | 사용자 확장 호출로 부여되는 임시 탭 접근. 상주 패널에서는 이것만을 전제로 하지 않음 |
+| scripting | 요청 시 본문/DOM 처리 코드를 주입 |
+| storage | 설정과 사용자 프리셋을 로컬에 저장 |
+| contextMenus | 선택한 문장 번역·설명·다듬기·보내기 |
+| tabs | 현재 창 탭 제목·URL 확인 및 에이전트 탭 목록 |
+| localhost/127.0.0.1:11434 host_permissions | 기본 로컬 Ollama 연결 |
+| optional_host_permissions: all_urls | 사이트별 접근 요청, 캡처의 전체 사이트 권한, 설정의 선택적 전체 허용 |
 
-**단일 목적 (single purpose):** 로컬 LLM으로 현재 보고 있는 페이지를 읽고,
-요약·설명·문장 다듬기를 돕고, 사용자의 승인 아래 페이지 조작을 대행한다.
+단일 목적은 사용자가 보고 있는 페이지를 이해하고 승인하에 작업하도록 보조하는 것이다. 페이지 본문·선택 문장·화면·탭 정보 중 작업에 쓰이는 데이터는 설정된 모델 서버로 전달될 수 있다. 대화·추론·행동 기록 및 opt-in 기억은 로컬에 저장한다. 앱 수준 암호화는 없다.
 
-**원격 코드 사용:** 없음. 번들에 포함된 코드만 실행한다.
-
-**데이터 수집:** 없음. 분석·추적·원격 로깅이 없고, 페이지 내용은 이 컴퓨터의
-Ollama 외에는 어디로도 전송되지 않는다(§7-6에서 외부 호스트 0건으로 검증).
-
-## 다시 만들려면
-
-타일 생성 스크립트는 저장소에 두지 않았다. Inter·Pretendard 를 npm 에서 받아
-Pillow 로 그리는 일회성 작업이라, 폰트를 커밋하지 않는 한 재현이 반쪽이 된다.
-다시 만들 일이 생기면 계획서 §11.5의 7-5 항목에 절차가 적혀 있다.
+소스에서 추적/분석 서비스와 원격 실행 코드 다운로드는 확인되지 않았다. 이것을 실제 네트워크 감사 완료 또는 모든 외부 통신 0건으로 표현하지 않는다. YouTube 자막 요청과 일반 페이지 이동, 원격 endpoint 가능성을 포함해 개인정보 고지를 작성한다.
