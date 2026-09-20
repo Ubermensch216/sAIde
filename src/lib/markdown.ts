@@ -7,6 +7,7 @@
 
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { PANEL_LINK_URI_PATTERN } from '@/lib/panel/links';
 import type { HighlighterCore } from 'shiki/core';
 
 /* ── 하이라이터 ────────────────────────────────────────── */
@@ -110,6 +111,15 @@ export async function highlightCode(
 marked.setOptions({ gfm: true, breaks: true });
 
 /**
+ * 링크에 허용하는 주소.
+ *
+ * ★ 조각 주소 문법은 만드는 곳(lib/panel/links.ts)에서 정규식 리터럴의 `.source`로 가져온다.
+ *   여기에 문자열로 다시 적으면 `\d`가 그냥 `d`가 되어 허용 목록이 조용히 헐거워지고,
+ *   문법이 바뀐 날에는 링크가 소리 없이 사라진다 — 둘 다 컴파일과 테스트를 통과한다.
+ */
+const ALLOWED_LINK_URI = new RegExp(`^(?:https?:|mailto:|${PANEL_LINK_URI_PATTERN})`, 'i');
+
+/**
  * 스트리밍 중에는 마크다운이 미완성 상태(닫히지 않은 ``` 등)로 들어온다.
  * marked는 이를 관대하게 처리하지만, 코드펜스가 열린 채 끝나면 나머지를
  * 통째로 코드로 삼킨다. 스트리밍 중에는 그게 오히려 자연스러우므로 둔다.
@@ -125,7 +135,8 @@ export function renderMarkdown(md: string): string {
     ],
     ALLOWED_ATTR: ['href', 'title', 'class', 'style'],
     // javascript:, data: 등 실행 가능한 스킴을 링크에서 제거한다.
-    ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i,
+    // 조각 주소는 일정 탭으로 건너뛰는 링크(lib/panel/links.ts) 하나만 통과시킨다.
+    ALLOWED_URI_REGEXP: ALLOWED_LINK_URI,
   });
 }
 
@@ -143,4 +154,15 @@ export function extractCodeBlocks(md: string): CodeBlock[] {
     blocks.push({ lang: m[1] ?? '', code: (m[2] ?? '').replace(/\n$/, '') });
   }
   return blocks;
+}
+
+/**
+ * 마크다운 본문에 글자를 그대로 넣을 때 서식으로 먹히지 않게 한다.
+ *
+ * ★ 페이지에서 가져온 문장에는 `_`·`*`·`[`가 섞여 있다. 그대로 넣으면 기울임이나
+ *   링크로 읽혀 원문과 다른 글이 화면에 나온다 — 근거 문장을 보여 주는 자리에서는
+ *   그 자체가 사실을 바꾸는 일이다.
+ */
+export function escapeMarkdownText(text: string): string {
+  return text.replace(/[\\`*_{}[\]()<>#+!|~]/g, char => `\\${char}`);
 }

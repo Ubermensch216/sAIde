@@ -18,6 +18,7 @@ const METHOD_KEY = {
   readability: 'page.method.readability',
   innerText: 'page.method.innerText',
   'youtube-caption': 'page.method.youtube',
+  pdf: 'page.method.pdf',
 } as const satisfies Record<ExtractedPage['method'], MessageKey>;
 
 export function PageContextChip({ page, onDetach }: Props) {

@@ -59,6 +59,20 @@ export interface Settings {
 
   /** 패널 오픈 시 워밍업 요청을 보낼지. 콜드 21.5초를 감추는 유일한 수단. */
   warmupOnOpen: boolean;
+
+  /**
+   * 일정 기한 알림. 하루 한 번, 지난 기한·오늘·내일 기한을 묶어 알린다.
+   * 기본 켜짐 — 기한 보드를 두는 이유가 알림이다.
+   */
+  taskAlerts: boolean;
+  /** 알릴 시각(0~23시). 하루를 시작할 무렵이 기본이다. */
+  taskAlertHour: number;
+
+  /**
+   * 오래 걸린 작업이 끝나면 알린다. 30초를 넘긴 작업에만 울린다.
+   * 기본 켜짐 — 작업을 큐에 맡기게 만든 이유가 "끝난 줄 모르는 것"이다.
+   */
+  jobAlerts: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -83,6 +97,11 @@ export const DEFAULT_SETTINGS: Settings = {
   locale: 'ko',
   theme: 'system',
   warmupOnOpen: true,
+
+  taskAlerts: true,
+  taskAlertHour: 9,
+
+  jobAlerts: true,
 };
 
 const KEY = 'saide.settings';
@@ -95,7 +114,7 @@ export function normalizeSettings(input: unknown): Settings {
     const value = raw[key as keyof Settings];
     if (values.includes(String(value))) Object.assign(next, { [key]: value });
   }
-  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
+  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen', 'taskAlerts', 'jobAlerts'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
   for (const key of ['model', 'embedModel'] as const) if (typeof raw[key] === 'string' && /^[\w.:/-]{1,200}$/.test(raw[key])) next[key] = raw[key];
   if (typeof raw.endpoint === 'string') {
     try {
@@ -103,7 +122,10 @@ export function normalizeSettings(input: unknown): Settings {
       if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash) next.endpoint = url.href.replace(/\/+$/, '');
     } catch { /* damaged settings use a safe default */ }
   }
-  const ranges = { temperature: [0, 1.5], numCtx: [2048, 32768], pageTokenBudget: [500, 8000], agentMaxTurns: [2, 12], agentIdleTimeoutMs: [20000, 120000], memoryRetentionDays: [0, 3650] };
+  const ranges = {
+    temperature: [0, 1.5], numCtx: [2048, 32768], pageTokenBudget: [500, 8000], agentMaxTurns: [2, 12],
+    agentIdleTimeoutMs: [20000, 120000], memoryRetentionDays: [0, 3650], taskAlertHour: [0, 23],
+  };
   for (const [key, [min, max]] of Object.entries(ranges)) {
     const value = raw[key as keyof Settings];
     if (typeof value === 'number' && Number.isFinite(value)) Object.assign(next, { [key]: Math.min(max!, Math.max(min!, key === 'temperature' ? value : Math.round(value))) });

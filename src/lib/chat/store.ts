@@ -18,6 +18,7 @@ import {
   addMessage,
   createConversation,
   db,
+  deleteMessage,
   deleteMessagesFrom,
   deleteConversation,
   findForTab,
@@ -41,6 +42,9 @@ import { AGENT_TOOLS } from '@/lib/agent/tools';
 import { createBrowserTools } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
 import { buildAgentSystem } from '@/lib/prompts/agent';
+import { ACTION_CARD_SCHEMA, actionCardInstruction, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
+import { buildTaskCandidates, type TaskCandidate } from '@/lib/schedule/candidates';
+import { bodyRevision, documentIdentity, readDocResult, saveDocResult } from '@/lib/cache/doc-results';
 
 /**
  * 도구 스키마가 매 턴 차지하는 프롬프트 비용. 상수라 한 번만 잰다.
@@ -86,6 +90,20 @@ interface ChatState {
    * 붙어 있는 첨부물이 아직 이 페이지의 것인지 대조하는 데 쓴다.
    */
   currentUrl: string;
+  /**
+   * 모델에 넣기 시작할 시각. 이보다 앞선 메시지는 화면에는 남지만 문맥에는 넣지 않는다.
+   *
+   * ★ 본문을 다른 페이지 것으로 바꾸면 앞 문서에 대한 문답은 더 이상 근거가 아니다.
+   *   그대로 두면 작은 모델이 지난 문서 이야기를 섞고, 좁은 문맥도 그만큼 잡아먹는다.
+   */
+  contextFrom: number;
+  /**
+   * 같은 주소에서 화면(프레임)만 바뀐 시각.
+   *
+   * ★ 프레임으로 화면을 갈아 끼우는 사이트는 주소 비교만으로 문서 전환을 알 수 없다.
+   *   이 값이 붙어 있는 본문보다 뒤면, 그 본문은 지난 화면의 것이다.
+   */
+  screenChangedAt: number;
 
   streaming: boolean;
   startedAt: number | null;
@@ -118,6 +136,10 @@ interface ChatState {
 
   openForTab: (tabId: number, url: string) => Promise<void>;
   openConversation: (conversation: Conversation) => Promise<void>;
+  /** 같은 작업이 다른 탭(팝업)으로 이어질 때 대상만 옮긴다. 대화는 그대로 둔다. */
+  followTab: (tabId: number, url: string) => Promise<void>;
+  /** 주소는 그대로인데 화면만 바뀌었다. 붙여 둔 본문을 지난 것으로 본다. */
+  noteScreenChange: (frameId: number) => void;
   attachPage: (tabId: number, settings: Settings) => Promise<ExtractedPage | null>;
   attachScreenshot: (tabId: number) => Promise<string | null>;
   detachPage: () => void;
@@ -128,6 +150,12 @@ interface ChatState {
   /** 승인 카드의 응답. false면 실행하지 않는다. */
   resolveApproval: (approved: boolean) => void;
   regenerate: (settings: Settings) => Promise<void>;
+  /** 메시지 한 건을 대화와 저장소에서 지운다. */
+  removeMessage: (id: UiMessage['id']) => Promise<void>;
+  /** 지금 대화를 통째로 비운다. 같은 페이지에서 처음부터 다시 시작한다. */
+  resetConversation: () => Promise<void>;
+  /** 구조화 명령(`/조치`) 실행. 결과는 캐시를 거쳐 모델 호출을 아낀다. */
+  runActionCard: (settings: Settings) => Promise<void>;
   stop: () => void;
   setError: (e: AppError | string | null) => void;
   clearError: () => void;
@@ -146,6 +174,8 @@ export const useChat = create<ChatState>((set, get) => ({
   screenshot: null,
   extracting: false,
   currentUrl: '',
+  contextFrom: 0,
+  screenChangedAt: 0,
   streaming: false,
   startedAt: null,
   expectedPrefillSec: 0,
@@ -161,11 +191,12 @@ export const useChat = create<ChatState>((set, get) => ({
     get().stop();
     const epoch = ++viewEpoch;
     ++attachmentEpoch;
-    set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [] });
+    set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [], contextFrom: 0, screenChangedAt: 0 });
     try {
       const conversation = await findForTab(tabId, url);
       const messages = conversation ? await listMessages(conversation.id) : [];
-      if (epoch === viewEpoch) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
+      if (epoch === viewEpoch) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false,
+        contextFrom: conversation?.contextFrom ?? 0 });
     } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
   },
   async openConversation(conversation) {
@@ -175,8 +206,44 @@ export const useChat = create<ChatState>((set, get) => ({
     set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
     try {
       const messages = await listMessages(conversation.id);
-      if (epoch === viewEpoch) set({ conversation, messages, loading: false });
+      if (epoch === viewEpoch) set({ conversation, messages, loading: false, contextFrom: conversation.contextFrom ?? 0 });
     } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
+  },
+
+  /**
+   * 팝업처럼 같은 작업이 다른 탭으로 이어질 때 대상만 옮긴다.
+   *
+   * ★ 대화를 갈아끼우지 않는다. 목록에서 항목을 하나 열었을 뿐인데 화면이 빈 대화로
+   *   바뀌면, 사용자는 방금까지의 문답과 붙여 둔 본문을 잃는다.
+   *   대신 읽고 쓸 대상 탭만 옮기고, 화면이 달라졌으므로 지난 본문은 지난 것으로 표시한다.
+   */
+  async followTab(tabId, url) {
+    const state = get();
+    if (state.currentUrl === url && state.conversation?.tabId === tabId) return;
+    const moved = Boolean(state.currentUrl) && !sameDocument(state.currentUrl, url);
+    set({
+      currentUrl: url,
+      ...(moved ? { screenChangedAt: Date.now() } : {}),
+      ...(state.pending ? { pending: { ...state.pending, tabId } } : {}),
+    });
+    const conversation = state.conversation;
+    if (!conversation || conversation.tabId === tabId) return;
+    set({ conversation: { ...conversation, tabId } });
+    await db.conversations.update(conversation.id, { tabId }).catch(() => undefined);
+  },
+
+  /**
+   * 탭 주소는 그대로인데 화면만 바뀌는 경우를 잡는다.
+   *
+   * ★ 관계없는 프레임(알림 폴링, 광고 등)까지 받아 본문을 떼면 사용자는 붙여 둔 문서를
+   *   자꾸 잃는다. 붙어 있는 본문을 뽑은 프레임과 최상위 프레임의 이동만 센다.
+   */
+  noteScreenChange(frameId) {
+    const page = get().page;
+    if (!page && !get().screenshot) return;
+    const attachedFrame = page?.sourceFrameId ?? 0;
+    if (frameId !== 0 && page && frameId !== attachedFrame) return;
+    set({ screenChangedAt: Date.now() });
   },
 
   /**
@@ -212,7 +279,9 @@ export const useChat = create<ChatState>((set, get) => ({
       // 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
       if (current && current.url === page.url) return current;
 
-      set({ page, currentUrl: page.url, lastContext: null });
+      set({ page, currentUrl: page.url, lastContext: null, screenChangedAt: 0 });
+      // 본문이 바뀌면 앞 문서에 대한 문답은 더 이상 근거가 아니다.
+      await moveContextBoundary(set, get, nextStamp(get()));
       return page;
     } catch (error) {
       if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
@@ -255,7 +324,7 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
 
-  detachPage: () => { ++attachmentEpoch; set({ page: null, lastContext: null, extracting: false }); },
+  detachPage: () => { ++attachmentEpoch; set({ page: null, lastContext: null, extracting: false }); void moveContextBoundary(set, get, nextStamp(get())); },
   detachScreenshot: () => { ++attachmentEpoch; set({ screenshot: null, lastContext: null, extracting: false }); },
 
   async send(text, settings) { await submit(set, get, text, settings); },
@@ -288,6 +357,39 @@ export const useChat = create<ChatState>((set, get) => ({
     } catch (error) { ownSet({ error: toAppError(null, error) }); }
     finally { ownSet({ streaming: false, abort: null }); }
   },
+
+  async removeMessage(id) {
+    const { conversation, streaming, loading } = get();
+    if (!conversation || streaming || loading) return;
+    if (!get().messages.some(message => message.id === id)) return;
+    set({ loading: true, error: null });
+    try {
+      await deleteMessage(conversation.id, id);
+      set(state => ({ messages: state.messages.filter(message => message.id !== id), lastContext: null }));
+    } catch (error) { set({ error: toAppError(null, error) }); }
+    finally { set({ loading: false }); }
+  },
+
+  async resetConversation() {
+    if (get().loading) return;
+    const { conversation, pending } = get();
+    get().stop();
+    ++attachmentEpoch;
+    set({ loading: true, extracting: false, error: null });
+    try {
+      // 레코드를 지우면 취소된 요청의 늦은 저장도 함께 거부된다.
+      if (conversation) await deleteConversation(conversation.id);
+      set({
+        conversation: null,
+        pending: conversation ? { tabId: conversation.tabId, url: conversation.originUrl } : pending,
+        messages: [], page: null, screenshot: null, lastContext: null, contextFrom: 0,
+        agentSteps: [], agentTurn: 0, expectedPrefillSec: 0,
+      });
+    } catch (error) { set({ error: toAppError(null, error) }); }
+    finally { set({ loading: false }); }
+  },
+
+  async runActionCard(settings) { await runActionCard(set, get, settings); },
 
   stop() {
     ++operationEpoch;
@@ -323,6 +425,39 @@ function guardedSet(set: Set, owns: () => boolean): Set {
   return patch => { if (owns()) set(patch); };
 }
 
+/**
+ * 대화 안에서 다음에 쓸 시각. 새 메시지의 `createdAt`과 문맥 경계를 모두 이 값으로 잡는다.
+ *
+ * ★ 밀리초는 생각보다 넉넉하지 않다. 답변이 캐시로 즉시 끝나면 질문·답변·다음 동작이 같은
+ *   밀리초에 들어오고, 그러면 `createdAt`만으로는 무엇이 먼저인지 알 수 없다.
+ *
+ * ★ 문맥 경계는 같은 시각의 메시지를 **포함**한다(contextMessages). 그래서 경계와 메시지 시각이
+ *   겹치면 두 가지가 동시에 깨진다 — 본문을 떼었는데 그 문서 문답이 문맥에 남거나,
+ *   방금 보낸 질문이 문맥에서 빠지거나. 시각이 절대 뒤로 가지 않게 하면 둘 다 사라진다.
+ */
+function nextStamp(state: ChatState): number {
+  return Math.max(Date.now(), (state.messages.at(-1)?.createdAt ?? 0) + 1);
+}
+
+/**
+ * 문맥 경계를 지금으로 옮긴다. 이 시점보다 앞선 문답은 화면에만 남고 모델에는 가지 않는다.
+ *
+ * ★ 본문을 새로 붙일 때마다 부른다. 앞 문서 요약이 다음 문서 답변에 섞이면 사용자는
+ *   무엇을 근거로 한 답인지 알 수 없고, 좁은 문맥(num_ctx)도 그만큼 잡아먹는다.
+ */
+async function moveContextBoundary(set: Set, get: Get, at = Date.now()): Promise<void> {
+  set({ contextFrom: at, lastContext: null });
+  const conversation = get().conversation;
+  if (!conversation) return;
+  set({ conversation: { ...conversation, contextFrom: at } });
+  await db.conversations.update(conversation.id, { contextFrom: at }).catch(() => undefined);
+}
+
+/** 모델에 넣을 대화. 경계 이전 메시지는 뺀다. */
+function contextMessages(state: ChatState): UiMessage[] {
+  return state.contextFrom ? state.messages.filter(message => message.createdAt >= state.contextFrom) : state.messages;
+}
+
 async function submit(set: Set, get: Get, text: string, settings: Settings, tab?: AgentTab) {
   const trimmed = text.trim();
   if (!trimmed || get().streaming || get().loading) return;
@@ -335,7 +470,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
     if (!owns()) return;
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
-    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: Date.now() };
+    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: nextStamp(get()) };
     const id = await addMessage(userMsg);
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
@@ -403,7 +538,9 @@ function freshAttachment(
 ): { page: ExtractedPage | null; screenshot: string | null; stale: boolean } {
   const currentUrl = get().currentUrl;
   const rawPage = get().page;
-  const stale = Boolean(rawPage && currentUrl && !sameDocument(rawPage.url, currentUrl));
+  // 주소가 같아도 화면이 바뀌었으면 지난 본문이다(프레임으로 문서를 갈아 끼우는 사이트).
+  const screenMoved = Boolean(rawPage && get().screenChangedAt > rawPage.extractedAt);
+  const stale = Boolean(rawPage && currentUrl && !sameDocument(rawPage.url, currentUrl)) || screenMoved;
 
   if (stale) set({ page: null, screenshot: null, lastContext: null });
 
@@ -431,7 +568,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   //   모델이 본 비율을 적기 위해서다.
   const attachment = fitAttachment(toAttachment(page, screenshot), settings.numCtx);
 
-  const context = buildContext(get().messages, settings.numCtx, attachment);
+  const context = buildContext(contextMessages(get()), settings.numCtx, attachment);
   // 캐시 적중분을 뺀 예상 대기시간. 페이지를 붙인 후속 질문은 이 값이 거의 0이다.
   const expectedPrefillSec = uncachedPrefillSeconds(get().lastContext, context);
 
@@ -521,6 +658,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
 
     const id = await addMessage({
       conversationId: conv.id,
+      clientId: String(placeholder.id),
       role: 'assistant',
       content,
       thinking: thinking || undefined,
@@ -557,6 +695,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
     if (aborted && content) {
       const id = await addMessage({
         conversationId: conv.id,
+        clientId: String(placeholder.id),
         role: 'assistant',
         content,
         thinking: thinking || undefined,
@@ -588,6 +727,109 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       error: aborted ? null : toAppError(err, e),
     }));
   }
+}
+
+/* ── 핵심·조치사항 카드 ────────────────────────────────── */
+
+/**
+ * 붙어 있는 본문에서 할 일·기한·제출물을 뽑는다.
+ *
+ * ★ 자유 형식으로 쓰게 하면 소형 모델은 항목을 빠뜨리거나 날짜를 바꿔 쓴다. JSON 스키마로
+ *   구속하고, 화면에 내놓기 전에 **코드가 원문과 대조**해 `원문 확인` 배지를 붙인다.
+ *   확인하지 못한 값도 지우지 않는다 — 판단은 사용자가 한다.
+ *
+ * ★ 본문은 언제나 이미 붙어 있는 것을 쓰고, 본문 판본이 같을 때만 모델 호출을 건너뛴다.
+ *   제목만 같고 내용이 바뀐 페이지에 지난 분석을 붙이면 캐시가 조용한 거짓말이 된다.
+ */
+async function runActionCard(set: Set, get: Get, settings: Settings) {
+  if (get().streaming || get().loading) return;
+  const { page } = freshAttachment(set, get);
+  if (!page) {
+    set({ error: { code: 'UNKNOWN', message: '먼저 이 페이지의 본문을 붙여 주세요.',
+      hint: '입력창 위의 페이지 첨부를 누르면 본문을 읽어 옵니다.' } });
+    return;
+  }
+
+  const epoch = ++operationEpoch;
+  const owns = () => epoch === operationEpoch;
+  const ownSet = guardedSet(set, owns);
+  ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null });
+
+  try {
+    const instruction = actionCardInstruction(page.title);
+    const conv = await ensureConversation(ownSet, get, `핵심·조치사항 · ${page.title}`, owns);
+    if (!conv || !owns()) return;
+
+    const lookup = {
+      identity: documentIdentity({ title: page.title, listName: new URL(page.url).host }),
+      command: 'actions',
+      instruction,
+      model: settings.model,
+    };
+    const revision = bodyRevision(page.text);
+    const hit = await readDocResult(lookup, revision);
+    if (!owns()) return;
+
+    if (hit) {
+      await commitActionCard(ownSet, get, conv.id, hit.content, hit.taskCandidates ?? [], page, hit.createdAt);
+      return;
+    }
+
+    const abort = get().abort ?? new AbortController();
+    let raw = '';
+    await abortable(streamChat(settings.endpoint, {
+      model: settings.model,
+      messages: [
+        { role: 'system', content: '너는 문서에서 할 일과 기한을 뽑아 JSON으로만 답하는 도구다.' },
+        { role: 'user', content: `<page_content>\n${page.text}\n</page_content>\n\n${instruction}` },
+      ],
+      stream: true,
+      format: ACTION_CARD_SCHEMA as unknown as Record<string, unknown>,
+      keep_alive: settings.keepAlive,
+      options: { temperature: 0, num_ctx: settings.numCtx },
+    }, { onToken: token => { raw += token; } }, abort.signal), abort.signal);
+    if (!owns()) return;
+
+    const card = parseActionCard(raw);
+    if (!card) {
+      ownSet({ error: { code: 'UNKNOWN', message: '모델이 정해진 형식으로 답하지 않았습니다.',
+        hint: '다시 시도하거나 다른 모델을 선택해 보세요.' } });
+      return;
+    }
+    const content = renderActionCard(page.title, card, page.text);
+    const candidates = buildTaskCandidates(card, page.text);
+    await saveDocResult(lookup, { bodyRevision: revision, content, taskCandidates: candidates,
+      sourceDoc: { title: page.title, url: page.url } });
+    if (!owns()) return;
+    await commitActionCard(ownSet, get, conv.id, content, candidates, page);
+  } catch (error) {
+    ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) });
+  } finally {
+    ownSet({ streaming: false, abort: null, startedAt: null });
+  }
+}
+
+/** 카드 결과를 대화에 남긴다. 캐시에서 꺼낸 것이면 처음 분석한 시각을 함께 적는다. */
+async function commitActionCard(
+  set: Set,
+  get: Get,
+  conversationId: number,
+  content: string,
+  taskCandidates: TaskCandidate[],
+  page: ExtractedPage,
+  cached?: number,
+) {
+  const message = {
+    conversationId,
+    role: 'assistant' as const,
+    content,
+    ...(taskCandidates.length ? { taskCandidates } : {}),
+    sourceDoc: { title: page.title, url: page.url },
+    ...(cached ? { cached } : {}),
+    createdAt: nextStamp(get()),
+  };
+  const id = await addMessage(message);
+  set(state => ({ messages: [...state.messages, { ...message, id }], lastContext: null }));
 }
 
 /* ── 에이전트 루프 (Phase 5) ───────────────────────────── */

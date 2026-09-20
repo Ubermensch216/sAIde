@@ -8,6 +8,10 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { PerfSample } from '@/types/ollama';
 import type { AgentStep } from '@/lib/agent/loop';
+import type { ScheduleTask } from '@/lib/schedule/task';
+import type { TaskCandidate } from '@/lib/schedule/candidates';
+import type { DocResult } from '@/lib/cache/doc-results';
+import type { FeedbackEntry } from '@/lib/feedback/store';
 import { sameDocument } from '@/lib/messaging/protocol';
 
 export interface Conversation {
@@ -19,10 +23,19 @@ export interface Conversation {
   originUrl: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * 모델에 넣기 시작할 시점(ms). 이보다 앞선 메시지는 화면에는 남지만 문맥에는 넣지 않는다.
+   *
+   * ★ 첨부 본문을 다른 페이지 것으로 바꾸면 앞 문서에 대한 문답은 더 이상 근거가 아니다.
+   *   그대로 두면 작은 모델이 지난 문서 이야기를 섞고, 좁은 문맥(num_ctx)도 그만큼 잡아먹는다.
+   */
+  contextFrom?: number;
 }
 
 export interface StoredMessage {
   id: number;
+  /** 중단된 스트리밍 말풍선과 나중에 저장되는 기록을 잇는다. */
+  clientId?: string;
   conversationId: number;
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -43,12 +56,35 @@ export interface StoredMessage {
    *   스키마 버전을 올리지 않아도 되는 비인덱스 필드다.
    */
   steps?: AgentStep[];
+  /**
+   * 답변에서 뽑아 원문과 대조까지 끝낸 일정 후보. 비인덱스 필드.
+   *
+   * ★ 답변 문자열만 남기면 패널을 닫았다 열었을 때 "일정으로 등록" 버튼이 사라진다.
+   *   후보를 메시지에 붙여 두면 며칠 뒤에 다시 열어도 그대로 등록할 수 있다.
+   *   원문 전체가 아니라 후보만 저장한다 — 본문을 대화마다 복사해 두지 않는다.
+   */
+  taskCandidates?: TaskCandidate[];
+  /** 그 후보가 나온 문서. 일정 항목의 출처가 된다. */
+  sourceDoc?: { title: string; url?: string };
+  /**
+   * 이 답변이 캐시에서 나왔다면 **처음 분석한 시각**(ms). 비인덱스 필드.
+   *
+   * ★ 있다는 사실 자체가 화면의 표시가 된다. 모델을 방금 부른 답변과 다시 꺼내 온 답변이
+   *   똑같이 보이면, 캐시는 사용자에게 조용한 거짓말이 된다.
+   */
+  cached?: number;
   createdAt: number;
 }
 
 class SaideDB extends Dexie {
   conversations!: EntityTable<Conversation, 'id'>;
   messages!: EntityTable<StoredMessage, 'id'>;
+  /** 일정(기한·후속조치 보드). 대화를 지워도 남는 별도 수명이다. */
+  tasks!: EntityTable<ScheduleTask, 'id'>;
+  /** 페이지 분석 결과 캐시. 같은 본문을 다시 분석할 때 모델을 부르지 않는다. */
+  docResults!: EntityTable<DocResult, 'key'>;
+  /** 정확도 피드백. 대화를 지워도 남는다 — 누적 수치가 이 기능의 목적이다. */
+  feedback!: EntityTable<FeedbackEntry, 'id'>;
 
   constructor() {
     super('saide');
@@ -59,6 +95,20 @@ class SaideDB extends Dexie {
       pageVectors: '++id, url, visitedAt',
     });
     this.version(2).stores({ memoryControl: 'id' });
+    // ★ dueDate는 중첩 객체(due.date)가 아니라 평평한 필드로 색인한다. "다음 7일" 같은
+    //   범위 조회를 걸어야 하고, Dexie는 중첩 필드에 범위 색인을 만들지 못한다.
+    this.version(3).stores({ tasks: '++id, status, dueDate, updatedAt, dedupeKey' });
+    /**
+     * v4 — 분석 결과 캐시와 정확도 피드백.
+     *
+     * ★ docResults의 기본키는 자동 증가가 아니라 문자열이다. 같은 문서·같은 명령·같은 본문이면
+     *   같은 자리에 덮어써야 한다. 자동 증가면 같은 분석이 계속 쌓인다.
+     * ★ 둘 다 대화와 수명이 다르다. 대화를 지워도 캐시와 피드백은 남는다(tasks와 같은 태도).
+     */
+    this.version(4).stores({
+      docResults: 'key, identity, createdAt',
+      feedback: '++id, kind, at',
+    });
   }
 }
 
@@ -102,8 +152,7 @@ export async function findForTab(
     .reverse()
     .sortBy('updatedAt');
 
-  const prev = existing[0];
-  return prev && sameDocument(prev.originUrl, url) ? prev : null;
+  return existing.find(conversation => sameDocument(conversation.originUrl, url)) ?? null;
 }
 
 /**
@@ -170,6 +219,15 @@ export async function updateMessage(
   patch: Partial<StoredMessage>,
 ): Promise<void> {
   await db.messages.update(id, patch);
+}
+
+/** 이 대화에 속한 메시지 한 건만 지운다. */
+export async function deleteMessage(conversationId: number, id: number | string): Promise<void> {
+  await db.transaction('rw', db.messages, db.conversations, async () => {
+    await db.messages.where('conversationId').equals(conversationId)
+      .filter(message => typeof id === 'number' ? message.id === id : message.clientId === id).delete();
+    await db.conversations.update(conversationId, { updatedAt: Date.now() });
+  });
 }
 
 export async function deleteMessagesFrom(

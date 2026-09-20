@@ -36,6 +36,12 @@ export type ErrorCode =
   | 'HOST_PERMISSION_REQUIRED'
   /** 승인 카드에서 사용자가 거부. */
   | 'ACTION_DENIED'
+  /** 기억이 꺼진 채로 `/기억`을 쳤다. 설정에서 켜야 풀린다. */
+  | 'MEMORY_OFF'
+  /** `/기억`을 찾을 말 없이 쳤다. 실패가 아니라 입력이 덜 끝난 것이다. */
+  | 'MEMORY_QUERY_REQUIRED'
+  /** `@일정`을 할 말 없이 쳤다. 마찬가지로 입력이 덜 끝난 것이다. */
+  | 'SCHEDULE_INPUT_REQUIRED'
   | 'UNKNOWN';
 
 export interface AppError {
@@ -43,11 +49,13 @@ export interface AppError {
   message: string;
   /** 사용자에게 보여줄 해결 방법. 없으면 UI가 기본 문구를 쓴다. */
   hint?: string;
+  /** HOST_PERMISSION_REQUIRED일 때 추가로 허용받아야 하는 주소. 없으면 현재 탭 주소를 요청한다. */
+  origins?: string[];
 }
 
 /* ── 페이지 추출 결과 ──────────────────────────────────── */
 
-export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption';
+export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption' | 'pdf';
 
 export interface ExtractedPage {
   url: string;
@@ -64,6 +72,16 @@ export interface ExtractedPage {
   estimatedTokens: number;
   method: ExtractMethod;
   extractedAt: number;
+  /** iframe에서 고른 결과라면 실제로 읽어 온 프레임을 기록한다. */
+  sourceFrameId?: number;
+  sourceFrameUrl?: string;
+  /**
+   * 사이트 권한이 없어 읽지 못한 하위 프레임 주소.
+   *
+   * ★ 본문이 다른 호스트의 뷰어(내장 문서 뷰어 등) 안에 있으면 빈 본문이 돌아온다.
+   *   왜 비었는지를 알려 줘야 사용자가 "권한 허용" 한 번으로 풀 수 있다.
+   */
+  blockedFrameUrls?: string[];
 }
 
 /* ── 페이지 액션 (Phase 5 에이전트) ─────────────────────── */
@@ -148,7 +166,7 @@ export type PanelToSW = (
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
   | { type: 'EXEC_ACTION'; tabId: number; action: PageAction }
   | { type: 'LIST_TABS' }
-  | { type: 'GET_ACTIVE_TAB' }
+  | { type: 'GET_ACTIVE_TAB'; windowId?: number }
   | { type: 'PREPARE_ACTION'; tabId: number; action: PageAction }
   | { type: 'CANCEL_REQUEST'; requestId: string }
 ) & { control?: RequestControl };
@@ -160,6 +178,16 @@ export interface TabSummary {
   url: string;
   title: string;
   active: boolean;
+  /**
+   * 이 탭이 속한 창.
+   *
+   * ★ 목록에서 항목을 열면 새 창 팝업이 뜨는 사이트가 많다. 창 구분이 없으면 패널이
+   *   다른 창의 팝업까지 따라가 대화를 갈아끼운다 — 사용자가 보는 화면은 그대로인데
+   *   패널만 빈 대화로 바뀌는 증상이 여기서 나온다.
+   */
+  windowId?: number;
+  /** 이 탭을 띄운 탭. 팝업이면 목록 탭이 들어온다. 대화를 유지한 채 대상만 옮기는 근거다. */
+  openedFrom?: number;
 }
 
 export type SWToPanel =
@@ -170,6 +198,15 @@ export type SWToPanel =
   | { type: 'TABS'; tabs: TabSummary[] }
   | { type: 'ACTIVE_TAB'; tab: TabSummary | null }
   | { type: 'TAB_CHANGED'; tab: TabSummary }
+  /** 패널이 붙들고 있던 탭이 닫혔다. 팝업을 닫은 경우가 대부분이다. */
+  | { type: 'TAB_CLOSED'; tabId: number }
+  /**
+   * 같은 탭 안에서 화면(프레임)이 바뀌었다.
+   *
+   * ★ 프레임으로 화면을 갈아 끼우는 사이트는 문서를 골라도 탭 주소가 그대로다.
+   *   주소 비교만으로는 알 수 없어, 붙여 둔 본문이 다른 문서인 채로 답이 만들어진다.
+   */
+  | { type: 'SCREEN_CHANGED'; tabId: number; frameId: number; url: string }
   | { type: 'CONTEXT_MENU'; preset: string; selectionText: string; tab: TabSummary }
   | { type: 'ERROR'; error: AppError };
 
