@@ -95,7 +95,9 @@ export async function streamChat(
 ): Promise<PerfSample | null> {
   assertRequestBudget(req);
   signal?.throwIfAborted();
-  const guard = idleSignal(180_000, signal);
+  // ★ 멈춘 채로 만든다. 첫 바이트가 올 때까지의 침묵은 프리필이지 실패가 아니다.
+  //   흐르다 멈춘 연결만 이 감시에 걸린다.
+  const guard = idleSignal(180_000, signal, false);
   try {
     return await readChat(endpoint, req, handlers, guard.signal, guard.touch);
   } catch (error) {

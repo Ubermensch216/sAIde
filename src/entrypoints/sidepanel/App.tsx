@@ -46,6 +46,7 @@ import { ApprovalCard } from './components/ApprovalCard';
 import { ErrorBanner } from './components/ErrorBanner';
 import { HealthBanner } from './components/HealthBanner';
 import { MessageList } from './components/MessageList';
+import { ResetIcon } from './components/ChatActionIcons';
 import { Composer } from './components/Composer';
 import { ConversationMenu } from './components/ConversationMenu';
 import { PageContextChip } from './components/PageContextChip';
@@ -572,6 +573,12 @@ export default function App() {
           <span className="conv-chip">{chat.conversation.title}</span>
         )}
         <div className="spacer" />
+        {/* 지금 대화를 비우고 같은 페이지에서 처음부터 시작한다. 지운 대화는 되돌릴 수 없다. */}
+        <button className="icon-btn" onClick={() => { setDraft(''); void chat.resetConversation(); }}
+          disabled={chat.loading || (!chat.messages.length && !chat.streaming && !chat.page && !chat.screenshot)}
+          title={t('panel.resetConversation')} aria-label={t('panel.resetConversation')}>
+          <ResetIcon />
+        </button>
         <button className="icon-btn" onClick={() => setMenuOpen(true)} title={t('panel.conversations')} aria-label={t('panel.conversations')}>
           <ListIcon />
         </button>
@@ -759,6 +766,10 @@ export default function App() {
           currentId={chat.conversation?.id ?? null}
           onPick={pickConversation}
           onClose={() => setMenuOpen(false)}
+          onRenamed={(id, title) => {
+            const current = useChat.getState().conversation;
+            if (current?.id === id) useChat.setState({ conversation: { ...current, title } });
+          }}
           onDeleted={(id) => {
             if (chat.conversation?.id === id) {
               chat.stop();

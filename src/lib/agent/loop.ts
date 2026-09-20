@@ -11,6 +11,10 @@ import { abortable, deadlineSignal } from '@/lib/async';
  *     IDLE_TIMEOUT   30초 — 한 턴이 이 시간 동안 아무것도 못 내놓으면 중단
  *     MAX_SAME_TOOL  3    — 동일 (도구, 인자) 조합이 3회면 강제 종료
  *
+ * ★ 무응답 시계는 **첫 글자가 나온 뒤부터** 센다. CPU 추론의 프리필 침묵은 실패가 아니라
+ *   정상 동작이고, 붙인 본문이 길수록 길어진다. 그 침묵을 세면 정상 요청이 늘 끊긴다.
+ *   잡아야 하는 것은 "흐르다 멈춘" 턴이다.
+ *
  * ★ 30초 타임아웃은 "총 턴 시간"이 아니라 **무응답 시간**으로 잰다.
  *   계획서 문구는 "턴당 30초"지만, 이 하드웨어에서 총 시간으로 재면 정상
  *   동작도 죽는다 — 툴 결과 700토큰이 붙은 턴은 프리필만 5초, thinking까지
@@ -194,7 +198,7 @@ export async function runAgentLoop(
     let turnContent = '';
     let turnThinking = '';
 
-    const guard = idleGuard(idleMs, opts.signal);
+    const guard = idleGuard(idleMs, opts.signal, false);
     let result: TurnResult;
     try {
       result = await abortable(deps.chat(
@@ -440,6 +444,8 @@ async function buildApproval(
 export function idleGuard(
   ms: number,
   outer?: AbortSignal,
+  /** false면 첫 bump()가 올 때까지 시계가 돌지 않는다. 프리필 침묵을 세지 않기 위해서다. */
+  armed = true,
 ): { signal: AbortSignal; bump: () => void; dispose: () => void; timedOut: boolean } {
   const ac = new AbortController();
   const state = { timedOut: false };
@@ -462,7 +468,7 @@ export function idleGuard(
       ac.abort();
     }, ms);
   };
-  bump();
+  if (armed) bump();
 
   return {
     signal: ac.signal,

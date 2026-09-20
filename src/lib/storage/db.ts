@@ -185,6 +185,7 @@ export async function listConversations(limit = 50): Promise<Conversation[]> {
   return db.conversations.orderBy('updatedAt').reverse().limit(limit).toArray();
 }
 
+/** 대화 제목을 바꾼다. 목록에서 나중에 되찾으려면 제목이 유일한 단서다. */
 export async function renameConversation(id: number, title: string): Promise<void> {
   await db.conversations.update(id, { title, updatedAt: Date.now() });
 }

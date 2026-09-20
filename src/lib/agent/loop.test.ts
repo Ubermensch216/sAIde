@@ -140,11 +140,12 @@ describe('멈춤 보장 (Phase 5-2)', () => {
     expect(out.steps).toHaveLength(4);
   });
 
-  it('무응답이 이어지면 시간 상한으로 끊는다', async () => {
-    // 토큰도 못 내놓고 응답도 없는 모델. 실제로는 프리필에서 멈춘 상태.
+  it('흐르다 멈추면 시간 상한으로 끊는다', async () => {
+    // 한 글자를 내놓고 그대로 멈춘 모델. 연결은 살아 있으나 진행이 없다.
     const chat = vi.fn(
-      (_m: ChatMessage[], _h: unknown, signal: AbortSignal) =>
+      (_m: ChatMessage[], h: { onToken?: (t: string) => void }, signal: AbortSignal) =>
         new Promise<TurnResult>((_res, rej) => {
+          h.onToken?.('가');
           signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true });
         }),
     );
@@ -153,6 +154,23 @@ describe('멈춤 보장 (Phase 5-2)', () => {
 
     expect(out.stopReason).toBe('timeout');
     expect(out.notice).toContain('응답이 없어');
+  });
+
+  /**
+   * ★ 이것이 무응답 시계를 첫 글자부터 세게 만든 이유다.
+   *   CPU 추론의 프리필은 긴 본문에서 정상적으로 수십 초를 침묵한다.
+   *   그 침묵을 세면 정상 요청이 늘 끊기고, 사용자는 이유를 알 수 없다.
+   */
+  it('★ 첫 글자가 나오기 전의 침묵은 상한에 걸리지 않는다', async () => {
+    const chat = vi.fn(async (_m: ChatMessage[], h: { onToken?: (t: string) => void }) => {
+      // 상한(30ms)보다 오래 아무것도 내놓지 않는 프리필.
+      await new Promise((r) => setTimeout(r, 90));
+      h.onToken?.('답');
+      return turn('답');
+    });
+
+    const out = await runAgentLoop(seed, deps({ chat }), { idleTimeoutMs: 30 });
+    expect(out.stopReason).toBe('answered');
   });
 
   it('토큰이 흐르는 동안에는 시간 상한이 되감긴다', async () => {

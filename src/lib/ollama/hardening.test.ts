@@ -25,11 +25,40 @@ it('done 뒤 연결이 열려 있어도 완료하고 reader를 취소한다', as
   expect(await streamChat(endpoint, req, {})).toMatchObject({ totalMs: 0 });
   expect(cancel).toHaveBeenCalledOnce();
 });
-it('일반 대화 스트림이 무응답이면 180초에 중단한다', async () => {
+it('흐르다 멈춘 스트림은 180초에 중단한다', async () => {
   vi.useFakeTimers();
-  vi.stubGlobal('fetch', async () => new Response(new ReadableStream({ pull: () => new Promise(() => {}) })));
+  let pulls = 0;
+  vi.stubGlobal('fetch', async () => new Response(new ReadableStream({
+    pull(controller) {
+      // 한 줄을 흘린 뒤 그대로 멈춘다. 연결은 살아 있으나 진행이 없는 상태다.
+      if (pulls++) return new Promise(() => {});
+      controller.enqueue(new TextEncoder().encode('{"message":{"content":"가"}}\n'));
+      return undefined;
+    },
+  })));
   const result = expect(streamChat(endpoint, req, {})).rejects.toMatchObject({ code: 'TIMEOUT' });
   await vi.advanceTimersByTimeAsync(180001); await result;
+});
+
+/**
+ * ★ 프리필 침묵은 실패가 아니다. 긴 본문을 붙인 정상 요청은 첫 바이트까지
+ *   수 분을 침묵할 수 있고, 그것을 끊으면 기능 자체가 쓸 수 없게 된다.
+ */
+it('★ 첫 바이트 전의 침묵은 상한에 걸리지 않는다', async () => {
+  vi.useFakeTimers();
+  let release!: () => void;
+  const prefill = new Promise<void>(resolve => { release = resolve; });
+  vi.stubGlobal('fetch', async () => new Response(new ReadableStream({
+    async pull(controller) {
+      await prefill;
+      controller.enqueue(new TextEncoder().encode('{"done":true}\n'));
+      controller.close();
+    },
+  })));
+  const running = streamChat(endpoint, req, {});
+  await vi.advanceTimersByTimeAsync(400_000);
+  release();
+  await expect(running).resolves.toMatchObject({ totalMs: expect.any(Number) });
 });
 it('초과한 컨텍스트는 HTTP 요청 전에 거부한다', async () => {
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
