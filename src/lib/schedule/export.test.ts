@@ -34,7 +34,7 @@ describe('tasksToCsv', () => {
       evidenceVerified: true,
       deliverables: ['사업계획서', '예산내역서'],
       contact: '기획예산과 홍길동',
-      source: { docTitle: '공모사업 안내', docUrl: 'https://onnara.test/doc/1' },
+      source: { docTitle: '공모사업 안내', docUrl: 'https://docs.example.com/doc/1' },
     })]);
     const [header, row] = csv.split('\r\n');
 
@@ -43,7 +43,7 @@ describe('tasksToCsv', () => {
     expect(row).toContain('사업계획서 / 예산내역서');
     expect(row).toContain('확인');
     expect(row).toContain('추정');
-    expect(row).toContain('https://onnara.test/doc/1');
+    expect(row).toContain('https://docs.example.com/doc/1');
   });
 
   it('★ 엑셀이 한국어를 깨뜨리지 않도록 BOM을 붙인다', () => {
@@ -62,7 +62,7 @@ describe('tasksToIcs', () => {
     expect(ics).toContain('DTSTART;VALUE=DATE:20260930');
     expect(ics).toContain('DTEND;VALUE=DATE:20261001');
     expect(ics).toContain('SUMMARY:사업계획서 제출');
-    expect(ics).toContain('UID:saide-task-1@onnara-saide');
+    expect(ics).toContain('UID:saide-task-1@saide');
   });
 
   it('달을 넘기는 종일 일정의 끝 날짜도 맞는다', () => {
@@ -82,7 +82,7 @@ describe('tasksToIcs', () => {
       task({ id: 3 }),
     ], NOW);
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
-    expect(ics).toContain('UID:saide-task-3@onnara-saide');
+    expect(ics).toContain('UID:saide-task-3@saide');
   });
 
   it('근거와 출처를 설명에 담고, 구분자로 읽힐 글자를 피한다', () => {

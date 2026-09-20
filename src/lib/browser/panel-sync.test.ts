@@ -8,7 +8,7 @@ const summary = (tab: Partial<TabSummary> & { tabId: number; url: string }): Tab
   title: '', active: true, ...tab,
 });
 
-const list = summary({ tabId: 1, url: 'https://onnara.test/list', windowId: 10 });
+const list = summary({ tabId: 1, url: 'https://docs.example.com/list', windowId: 10 });
 
 it('다른 창에서 일어난 탭 전환은 패널을 흔들지 않는다', () => {
   const other = summary({ tabId: 5, url: 'https://news.test/article', windowId: 99 });
@@ -16,18 +16,18 @@ it('다른 창에서 일어난 탭 전환은 패널을 흔들지 않는다', () 
 });
 
 it('목록 탭이 새 창으로 띄운 문서 팝업은 대화를 유지한 채 따라간다', () => {
-  const popup = summary({ tabId: 7, url: 'https://onnara.test/doc/123', windowId: 42, openedFrom: 1 });
+  const popup = summary({ tabId: 7, url: 'https://docs.example.com/doc/123', windowId: 42, openedFrom: 1 });
   expect(decideTabChange({ windowId: 10, tab: list }, popup)).toBe('follow');
 });
 
 it('문서 팝업을 닫고 목록 탭으로 돌아와도 대화를 새로 열지 않는다', () => {
-  const popup = summary({ tabId: 7, url: 'https://onnara.test/doc/123', windowId: 42, openedFrom: 1 });
+  const popup = summary({ tabId: 7, url: 'https://docs.example.com/doc/123', windowId: 42, openedFrom: 1 });
   expect(decideTabChange({ windowId: 10, tab: popup }, list)).toBe('follow');
 });
 
 it('팝업 체인(문서 → 첨부 뷰어)도 한 단계씩 이어서 따라간다', () => {
-  const popup = summary({ tabId: 7, url: 'https://onnara.test/doc/123', windowId: 42, openedFrom: 1 });
-  const viewer = summary({ tabId: 8, url: 'https://onnara.test/viewer', windowId: 43, openedFrom: 7 });
+  const popup = summary({ tabId: 7, url: 'https://docs.example.com/doc/123', windowId: 42, openedFrom: 1 });
+  const viewer = summary({ tabId: 8, url: 'https://docs.example.com/viewer', windowId: 43, openedFrom: 7 });
   expect(decideTabChange({ windowId: 10, tab: popup }, viewer)).toBe('follow');
 });
 
@@ -37,22 +37,22 @@ it('출처가 같아도 주소가 다른 사이트면 따라가지 않는다', (
 });
 
 it('같은 창에서 다른 문서로 옮기면 그 문서의 대화로 갈아끼운다', () => {
-  const another = summary({ tabId: 2, url: 'https://onnara.test/other', windowId: 10 });
+  const another = summary({ tabId: 2, url: 'https://docs.example.com/other', windowId: 10 });
   expect(decideTabChange({ windowId: 10, tab: list }, another)).toBe('switch');
 });
 
 it('같은 탭·같은 문서의 반복 이벤트는 요약만 갱신한다', () => {
-  const again = summary({ tabId: 1, url: 'https://onnara.test/list#top', windowId: 10 });
+  const again = summary({ tabId: 1, url: 'https://docs.example.com/list#top', windowId: 10 });
   expect(decideTabChange({ windowId: 10, tab: list }, again)).toBe('follow');
 });
 
 it('같은 탭이 다른 주소로 이동하면 갈아끼운다', () => {
-  const moved = summary({ tabId: 1, url: 'https://onnara.test/other', windowId: 10 });
+  const moved = summary({ tabId: 1, url: 'https://docs.example.com/other', windowId: 10 });
   expect(decideTabChange({ windowId: 10, tab: list }, moved)).toBe('switch');
 });
 
 it('창을 아직 모르거나 상대 창을 모르면 창 조건으로 무시하지 않는다', () => {
-  const unknown = summary({ tabId: 5, url: 'https://onnara.test/other' });
+  const unknown = summary({ tabId: 5, url: 'https://docs.example.com/other' });
   expect(decideTabChange({ windowId: null, tab: list }, unknown)).toBe('switch');
   expect(decideTabChange({ windowId: 10, tab: list }, unknown)).toBe('switch');
 });

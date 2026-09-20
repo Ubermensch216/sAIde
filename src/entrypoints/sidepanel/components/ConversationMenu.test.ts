@@ -29,7 +29,7 @@ async function open(props: Partial<Parameters<typeof ConversationMenu>[0]> = {})
   return { onRenamed };
 }
 
-const rename = () => document.querySelector<HTMLButtonElement>('button[aria-label^="감사 자료"][aria-label$="제목 수정"]')!;
+const rename = () => document.querySelector<HTMLButtonElement>('button[aria-label^="자료 제출"][aria-label$="제목 수정"]')!;
 const input = () => document.querySelector<HTMLInputElement>('.conv-edit')!;
 
 async function type(value: string) {
@@ -47,11 +47,11 @@ async function press(key: string) {
 }
 
 it('목록에서 제목을 바로 고치고 Enter로 저장한다', async () => {
-  const id = await storage.createConversation(1, 'https://onnara.test/main', '감사 자료 제출 관련 문의');
+  const id = await storage.createConversation(1, 'https://docs.example.com/main', '자료 제출 관련 문의');
   const { onRenamed } = await open({ currentId: id });
 
   await act(async () => rename().click());
-  expect(input().value).toBe('감사 자료 제출 관련 문의');
+  expect(input().value).toBe('자료 제출 관련 문의');
 
   await type('감사 자료 제출 - 9월 30일 기한');
   await press('Enter');
@@ -64,7 +64,7 @@ it('목록에서 제목을 바로 고치고 Enter로 저장한다', async () => 
 });
 
 it('Esc는 제목 수정만 취소하고 대화 목록은 닫지 않는다', async () => {
-  const id = await storage.createConversation(1, 'https://onnara.test/main', '감사 자료 제출 관련 문의');
+  const id = await storage.createConversation(1, 'https://docs.example.com/main', '자료 제출 관련 문의');
   const onClose = vi.fn();
   const { onRenamed } = await open({ onClose });
 
@@ -74,24 +74,24 @@ it('Esc는 제목 수정만 취소하고 대화 목록은 닫지 않는다', asy
 
   expect(onClose).not.toHaveBeenCalled();
   expect(onRenamed).not.toHaveBeenCalled();
-  expect((await storage.db.conversations.get(id))!.title).toBe('감사 자료 제출 관련 문의');
+  expect((await storage.db.conversations.get(id))!.title).toBe('자료 제출 관련 문의');
   expect(document.querySelector('.conv-edit')).toBeNull();
 });
 
 it('빈 제목은 저장하지 않는다. 목록에서 대화를 구분할 수 없게 된다', async () => {
-  const id = await storage.createConversation(1, 'https://onnara.test/main', '감사 자료 제출 관련 문의');
+  const id = await storage.createConversation(1, 'https://docs.example.com/main', '자료 제출 관련 문의');
   const { onRenamed } = await open();
 
   await act(async () => rename().click());
   await type('   ');
   await press('Enter');
 
-  expect((await storage.db.conversations.get(id))!.title).toBe('감사 자료 제출 관련 문의');
+  expect((await storage.db.conversations.get(id))!.title).toBe('자료 제출 관련 문의');
   expect(onRenamed).not.toHaveBeenCalled();
 });
 
 it('✓ 버튼으로도 저장되고, 제목 줄 클릭은 그대로 대화 열기다', async () => {
-  const id = await storage.createConversation(1, 'https://onnara.test/main', '감사 자료 제출 관련 문의');
+  const id = await storage.createConversation(1, 'https://docs.example.com/main', '자료 제출 관련 문의');
   const onPick = vi.fn();
   const { onRenamed } = await open({ onPick });
 

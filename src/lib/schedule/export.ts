@@ -101,7 +101,7 @@ export function tasksToIcs(tasks: ScheduleTask[], now: Date = new Date()): strin
     ].filter(Boolean).join('\n');
 
     lines.push('BEGIN:VEVENT');
-    lines.push(`UID:saide-task-${task.id}@onnara-saide`);
+    lines.push(`UID:saide-task-${task.id}@saide`);
     lines.push(`DTSTAMP:${icsStamp(now)}`);
     if (task.due?.time) {
       lines.push(`DTSTART;TZID=Asia/Seoul:${icsDate(task.dueDate)}T${task.due.time.replace(':', '')}00`);

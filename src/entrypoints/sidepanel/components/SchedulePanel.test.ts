@@ -98,7 +98,7 @@ it('★ 문서에서 온 항목은 근거 문장과 검증 결과를 함께 보�
     evidenceVerified: true,
     deliverables: ['사업계획서'],
     contact: '기획예산과 홍길동',
-    source: { docTitle: '공모사업 안내', docUrl: 'https://onnara.test/doc/1' },
+    source: { docTitle: '공모사업 안내', docUrl: 'https://docs.example.com/doc/1' },
   });
   await render();
 
@@ -115,7 +115,7 @@ it('★ 문서에서 온 항목은 근거 문장과 검증 결과를 함께 보�
   const create = vi.fn();
   vi.stubGlobal('chrome', { tabs: { create } });
   document.querySelector<HTMLButtonElement>('.sched-link')!.click();
-  expect(create).toHaveBeenCalledWith({ url: 'https://onnara.test/doc/1' });
+  expect(create).toHaveBeenCalledWith({ url: 'https://docs.example.com/doc/1' });
 });
 
 it('직접 추가한 일정이 목록과 저장소에 함께 들어간다', async () => {

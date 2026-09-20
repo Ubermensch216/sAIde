@@ -11,7 +11,7 @@ function ucs2(text: string): string {
 }
 
 /**
- * HWP에서 변환한 공문 PDF처럼 한글 글꼴을 넣지 않고 표준 한글 CMap만 가리키는 파일을 만든다.
+ * 한글 글꼴을 넣지 않고 표준 한글 CMap만 가리키는 파일을 만든다.
  * 이런 파일은 CMap 없이는 글자를 하나도 뽑지 못한다.
  */
 function koreanPdf(lines: string[]): Uint8Array {
@@ -43,7 +43,7 @@ function koreanPdf(lines: string[]): Uint8Array {
 
 const read = getDocument as unknown as GetPdfDocument;
 
-it('글꼴을 넣지 않은 한글 공문 PDF에서 한국어 CMap으로 본문 글자를 뽑는다', async () => {
+it('글꼴을 넣지 않은 한글 PDF에서 한국어 CMap으로 본문 글자를 뽑는다', async () => {
   const bytes = koreanPdf(['제목 감사원 감사자료 제출 요구', '제출기한: 2026. 9. 18.(금)']);
   expect(isPdfBytes(bytes)).toBe(true);
   const result = await extractPdfText(read, bytes, { cMapUrl: CMAPS });
