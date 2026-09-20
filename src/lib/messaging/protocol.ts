@@ -73,16 +73,13 @@ export interface ExtractedPage {
   estimatedTokens: number;
   method: ExtractMethod;
   extractedAt: number;
-  /** iframe에서 고른 결과라면 실제로 읽어 온 프레임을 기록한다. */
-  sourceFrameId?: number;
-  sourceFrameUrl?: string;
   /**
-   * 사이트 권한이 없어 읽지 못한 하위 프레임 주소.
+   * 이 본문을 읽어 온 프레임. 없으면 최상위 프레임(0)이다.
    *
-   * ★ 본문이 다른 호스트의 뷰어(내장 문서 뷰어 등) 안에 있으면 빈 본문이 돌아온다.
-   *   왜 비었는지를 알려 줘야 사용자가 "권한 허용" 한 번으로 풀 수 있다.
+   * ★ 화면 전환 감지가 이 값을 본다. 붙어 있는 본문을 뽑은 프레임과 최상위 프레임의
+   *   이동만 세야, 관계없는 프레임 때문에 붙여 둔 문서를 자꾸 잃지 않는다.
    */
-  blockedFrameUrls?: string[];
+  sourceFrameId?: number;
 }
 
 /* ── 페이지 액션 (Phase 5 에이전트) ─────────────────────── */

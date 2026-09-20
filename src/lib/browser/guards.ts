@@ -21,7 +21,9 @@ export function validAction(v: unknown): v is PageAction {
 
 export function validControl(v: unknown): v is RequestControl {
   return record(v) && text(v.id, 100) && typeof v.deadline === 'number' && Number.isFinite(v.deadline) &&
-    v.deadline > Date.now() && v.deadline <= Date.now() + 60_000 &&
+    // ★ 60초로는 모자란다. PDF 본문을 받아 오프스크린에서 해석하는 추출 한 건이
+    //   그 안에 끝나지 않을 수 있고, 그러면 정상 요청이 "만료된 요청"으로 거부된다.
+    v.deadline > Date.now() && v.deadline <= Date.now() + 180_000 &&
     (v.expectedUrl === undefined || text(v.expectedUrl, 8192)) &&
     (v.approvalToken === undefined || text(v.approvalToken, 100));
 }
