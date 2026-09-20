@@ -16,7 +16,7 @@ const SOURCE = [
 
 const PROOF = '3. 붙임 서식을 작성하여 2026. 9. 30.(수)까지 제출하여 주시기 바랍니다.';
 
-/** 기한 문장이 없는 공문. 기한과 무관한 판정을 볼 때 쓴다. */
+/** 기한 문장이 없는 문서. 기한과 무관한 판정을 볼 때 쓴다. */
 const NOTICE = '2. 부서 의견을 취합하여 회신하여 주시기 바랍니다. 별도 기한은 없습니다.';
 
 function card(patch: Partial<ActionCard> = {}): ActionCard {
@@ -123,7 +123,7 @@ describe('buildTaskCandidates', () => {
   });
 
   it('할 일이 없는 단순 알림은 후보가 없다', () => {
-    expect(buildTaskCandidates(card(), '단순 알림 공문입니다. 별도 조치는 없습니다.', REPORT_DAY)).toEqual([]);
+    expect(buildTaskCandidates(card(), '단순 알림입니다. 별도 조치는 없습니다.', REPORT_DAY)).toEqual([]);
   });
 
   it('같은 할 일이 두 번 나오면 한 건만 남긴다', () => {

@@ -37,6 +37,16 @@ export default defineConfig({
       'storage',
       'contextMenus',
       'tabs',
+      // 새 창 팝업의 부모 탭은 이 이벤트로만 알 수 있다(lib/browser/panel-sync.ts).
+      'webNavigation',
+      /**
+       * 일정 탭의 기한 알림. 둘은 한 쌍이다.
+       *
+       * ★ 사이드패널 타이머로는 안 된다. 패널을 닫으면 문서가 사라져 타이머도 죽는다.
+       *   서비스 워커를 알람이 깨워 확인하고, 알림으로 알린다. 알림은 하루 한 번이다.
+       */
+      'alarms',
+      'notifications',
     ],
 
     // 설치 시점에 확정으로 갖는 접근권은 로컬 Ollama뿐이다.

@@ -9,7 +9,7 @@ function task(patch: Partial<ScheduleTask> = {}): ScheduleTask {
 }
 
 describe('csvCell', () => {
-  it('★ 수식으로 읽히는 칸을 막는다 — 공문 제목은 "-"로 시작하는 일이 잦다', () => {
+  it('★ 수식으로 읽히는 칸을 막는다 — 문서 제목은 "-"로 시작하는 일이 잦다', () => {
     expect(csvCell('-붙임 참조')).toBe("'-붙임 참조");
     expect(csvCell('=1+1')).toBe("'=1+1");
     expect(csvCell('@담당자')).toBe("'@담당자");
@@ -90,7 +90,7 @@ describe('tasksToIcs', () => {
       evidence: '가, 나; 다',
       source: { docTitle: '공모사업 안내' },
     })], NOW);
-    expect(ics).toContain('DESCRIPTION:근거: 가\\, 나\\; 다\\n출처 공문: 공모사업 안내');
+    expect(ics).toContain('DESCRIPTION:근거: 가\\, 나\\; 다\\n출처 문서: 공모사업 안내');
   });
 
   it('항목이 없어도 올바른 달력 파일이다', () => {
@@ -106,6 +106,6 @@ describe('icsText / exportFileName', () => {
   });
 
   it('파일 이름에 날짜를 붙여 덮어쓰지 않게 한다', () => {
-    expect(exportFileName('csv', new Date(2026, 8, 18))).toBe('온나라-sAIde-일정-20260918.csv');
+    expect(exportFileName('csv', new Date(2026, 8, 18))).toBe('sAIde-일정-20260918.csv');
   });
 });

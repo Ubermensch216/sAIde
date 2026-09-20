@@ -45,6 +45,10 @@ import { buildAgentSystem } from '@/lib/prompts/agent';
 import { ACTION_CARD_SCHEMA, actionCardInstruction, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
 import { buildTaskCandidates, type TaskCandidate } from '@/lib/schedule/candidates';
 import { bodyRevision, documentIdentity, readDocResult, saveDocResult } from '@/lib/cache/doc-results';
+import { classifyScheduleIntent } from '@/lib/schedule/classify';
+import { patchFor, planFor, type SchedulePlan } from '@/lib/schedule/resolve';
+import { renderCancelled, renderList, renderOutcome, renderProblem } from '@/lib/schedule/report';
+import { addTask, deleteTask, listTasks, setTaskDone, updateTask } from '@/lib/schedule/store';
 
 /**
  * 도구 스키마가 매 턴 차지하는 프롬프트 비용. 상수라 한 번만 잰다.
@@ -134,6 +138,14 @@ interface ChatState {
    */
   pendingApproval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
 
+  /**
+   * 확인을 기다리는 일정 계획(`@일정`).
+   *
+   * ★ 등록·수정·삭제는 예외 없이 이 카드를 거친다. 자동 저장 경로는 없다 —
+   *   모델이 문장을 잘못 읽었을 때 되돌릴 수 없는 쪽은 사용자의 일정이다.
+   */
+  pendingSchedule: { plan: SchedulePlan; typed: string } | null;
+
   openForTab: (tabId: number, url: string) => Promise<void>;
   openConversation: (conversation: Conversation) => Promise<void>;
   /** 같은 작업이 다른 탭(팝업)으로 이어질 때 대상만 옮긴다. 대화는 그대로 둔다. */
@@ -156,6 +168,10 @@ interface ChatState {
   resetConversation: () => Promise<void>;
   /** 구조화 명령(`/조치`) 실행. 결과는 캐시를 거쳐 모델 호출을 아낀다. */
   runActionCard: (settings: Settings) => Promise<void>;
+  /** `@일정` 한 문장 실행. 모델은 분류만 하고, 목록과 답변 문장은 코드가 만든다. */
+  runScheduleIntent: (text: string, settings: Settings) => Promise<void>;
+  /** 확인 카드의 응답. null이면 취소. */
+  commitSchedulePlan: (ids: number[] | null) => Promise<void>;
   stop: () => void;
   setError: (e: AppError | string | null) => void;
   clearError: () => void;
@@ -185,6 +201,7 @@ export const useChat = create<ChatState>((set, get) => ({
   agentSteps: [],
   agentTurn: 0,
   pendingApproval: null,
+  pendingSchedule: null,
 
   /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
   async openForTab(tabId, url) {
@@ -383,13 +400,15 @@ export const useChat = create<ChatState>((set, get) => ({
         conversation: null,
         pending: conversation ? { tabId: conversation.tabId, url: conversation.originUrl } : pending,
         messages: [], page: null, screenshot: null, lastContext: null, contextFrom: 0,
-        agentSteps: [], agentTurn: 0, expectedPrefillSec: 0,
+        agentSteps: [], agentTurn: 0, expectedPrefillSec: 0, pendingSchedule: null,
       });
     } catch (error) { set({ error: toAppError(null, error) }); }
     finally { set({ loading: false }); }
   },
 
   async runActionCard(settings) { await runActionCard(set, get, settings); },
+  async runScheduleIntent(text, settings) { await runScheduleIntent(set, get, text, settings); },
+  async commitSchedulePlan(ids) { await commitSchedulePlan(set, get, ids); },
 
   stop() {
     ++operationEpoch;
@@ -726,6 +745,117 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       lastContext: null,
       error: aborted ? null : toAppError(err, e),
     }));
+  }
+}
+
+/* ── `@일정` 자연어 일정 관리 ───────────────────────────── */
+
+/** 코드가 저장소를 읽어 만든 기록. 모델 답변과 구분해 표시된다. */
+async function reportInto(set: Set, get: Get, content: string, owns: () => boolean = () => true): Promise<void> {
+  const conv = get().conversation;
+  if (!conv || !owns()) return;
+  const message = { conversationId: conv.id, role: 'assistant' as const, content,
+    origin: 'automation' as const, createdAt: nextStamp(get()) };
+  const id = await addMessage(message);
+  if (!owns()) return;
+  set(s => ({ messages: [...s.messages, { ...message, id }] }));
+}
+
+/**
+ * `@일정` 한 문장을 실행한다.
+ *
+ * ★ 모델은 **분류만** 한다. 목록도 결과 문장도 코드가 저장소를 읽어 만든다(report.ts).
+ *   대화 모델에게 일정 목록을 맡기면 없는 일정을 지어내고, 사용자는 그것을 구분할 수 없다.
+ * ★ 쓰기는 여기서 일어나지 않는다. 계획을 카드에 걸어 두고 끝낸다 — 실제 저장은
+ *   사용자가 누른 뒤 commitSchedulePlan에서만 일어난다.
+ * ★ 분류 호출은 독립 1회성 요청이다. 문서 대화의 KV 캐시 접두사를 훼손하지 않는다.
+ */
+async function runScheduleIntent(set: Set, get: Get, text: string, settings: Settings) {
+  const trimmed = text.trim();
+  if (!trimmed || get().streaming || get().loading) return;
+  const epoch = ++operationEpoch;
+  const owns = () => epoch === operationEpoch;
+  const ownSet = guardedSet(set, owns);
+  // 앞서 걸어 둔 계획은 여기서 버린다. 새 지시가 앞 지시를 대신한다.
+  ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null, pendingSchedule: null });
+  try {
+    const conv = await ensureConversation(ownSet, get, trimmed, owns);
+    if (!conv || !owns()) return;
+
+    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: nextStamp(get()) };
+    const userId = await addMessage(userMsg);
+    if (!owns()) return;
+    ownSet(s => ({ messages: [...s.messages, { ...userMsg, id: userId }] }));
+
+    const intent = await classifyScheduleIntent(settings, trimmed, get().abort?.signal);
+    if (!owns()) return;
+
+    const plan = planFor(intent, await listTasks(), trimmed);
+    if (!owns()) return;
+
+    // 조회와 안내는 확인받을 것이 없다. 바로 답한다.
+    // ★ 화면을 옮기지 않는다. 결과는 여기 남고, 일정 탭으로 가는 길은 답변 안의 링크다.
+    if (plan.kind === 'list') { await reportInto(ownSet, get, renderList(plan), owns); return; }
+    if (plan.kind === 'none') { await reportInto(ownSet, get, renderProblem(plan.problem), owns); return; }
+
+    ownSet({ pendingSchedule: { plan, typed: trimmed } });
+  } catch (error) {
+    const err = error instanceof OllamaError ? error : null;
+    const aborted = err?.code === 'ABORTED' || get().abort?.signal.aborted;
+    ownSet({ error: aborted ? null : toAppError(err, error) });
+  } finally {
+    ownSet({ streaming: false, abort: null, startedAt: null });
+  }
+}
+
+/**
+ * 확인 카드의 응답을 실행한다.
+ *
+ * @param ids `null`이면 취소. 등록은 배열이 비어 있지 않기만 하면 되고,
+ *            수정·삭제는 이 배열에 든 항목만 건드린다.
+ */
+async function commitSchedulePlan(set: Set, get: Get, ids: number[] | null) {
+  const pending = get().pendingSchedule;
+  if (!pending) return;
+  const { plan } = pending;
+  if (plan.kind === 'list' || plan.kind === 'none') { set({ pendingSchedule: null }); return; }
+
+  // 카드를 먼저 내린다. 저장이 도는 동안 한 번 더 눌러 두 번 실행되는 일을 막는다.
+  set({ pendingSchedule: null });
+
+  try {
+    if (ids === null || !ids.length) {
+      await reportInto(set, get, renderCancelled(plan.kind));
+      return;
+    }
+
+    if (plan.kind === 'create') {
+      const id = await addTask(plan.task);
+      const saved = (await listTasks()).filter(task => task.id === id);
+      await reportInto(set, get, renderOutcome('create', saved));
+      return;
+    }
+
+    const chosen = plan.targets.filter(task => ids.includes(task.id));
+    if (!chosen.length) { await reportInto(set, get, renderCancelled(plan.kind)); return; }
+
+    if (plan.kind === 'update') {
+      for (const task of chosen) {
+        const { status, ...rest } = patchFor(task, plan.changes);
+        if (Object.keys(rest).length) await updateTask(task.id, rest);
+        // ★ 완료 여부는 setTaskDone을 거친다. 직접 쓰면 완료 시각이 비어 목록 정렬이 흔들린다.
+        if (status) await setTaskDone(task.id, status === 'done');
+      }
+      const after = (await listTasks()).filter(task => chosen.some(item => item.id === task.id));
+      await reportInto(set, get, renderOutcome('update', after));
+      return;
+    }
+
+    for (const task of chosen) await deleteTask(task.id);
+    // ★ 지운 항목은 제목만 남긴다. 기한과 D-day를 되살려 적으면 아직 있는 것처럼 읽힌다.
+    await reportInto(set, get, renderOutcome('delete', chosen.map(task => ({ title: task.title }))));
+  } catch (error) {
+    set({ error: toAppError(null, error) });
   }
 }
 

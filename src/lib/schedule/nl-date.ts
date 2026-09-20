@@ -1,8 +1,8 @@
 /**
  * 자연어 날짜·기간 해석(`@일정`).
  *
- * ★ 이것은 [due-date.ts]와 하는 일이 다르다. 그쪽은 **공문에 적힌** 기한 표기를 읽고,
- *   여기는 **사람이 입력창에 친** 말("내일", "이번 주", "5월")을 읽는다. 공문에는
+ * ★ 이것은 [due-date.ts]와 하는 일이 다르다. 그쪽은 **문서에 적힌** 기한 표기를 읽고,
+ *   여기는 **사람이 입력창에 친** 말("내일", "이번 주", "5월")을 읽는다. 문서에는
  *   "이번 주"가 없고, 사람은 "2026. 9. 30.(수)"라고 치지 않는다.
  *
  * ★ 모델에게만 맡기지 않는다. 참조 프로젝트(myAI)가 남긴 교훈이 이것이다 — 소형 모델은
@@ -32,7 +32,7 @@ export function monthRange(year: number, month: number): DateRange {
   return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(lastDay)}` };
 }
 
-/** 일요일부터 토요일까지. 공문·업무 달력의 관례이자 달력 격자와 같은 규칙이다. */
+/** 일요일부터 토요일까지. 업무 달력의 관례이자 달력 격자와 같은 규칙이다. */
 export function weekRange(dateISO: string): DateRange {
   const start = startOfWeek(dateISO);
   return { from: start, to: addDays(start, 6) };

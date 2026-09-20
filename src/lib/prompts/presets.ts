@@ -132,6 +132,22 @@ export const PAGE_PRESETS: Preset[] = [
     build: (lang) => buildPageTranslation(lang),
   },
   {
+    /**
+     * 핵심·조치사항 카드.
+     *
+     * ★ 이 명령만 프리셋 문구를 쓰지 않는다. JSON 스키마로 구속해 받고, 코드가 원문과
+     *   대조해 배지를 붙인 뒤에야 화면에 나온다(lib/ai/action-card.ts). build는
+     *   프리셋 표를 채우기 위한 자리일 뿐이며 App이 별도 경로로 실행한다.
+     */
+    id: 'actions',
+    label: '할 일·기한 뽑기',
+    slash: '/actions',
+    aliases: ['/조치', '/todo'],
+    hint: '문서에서 할 일·기한·제출물을 뽑고 원문과 대조합니다',
+    needs: 'page',
+    build: () => '',
+  },
+  {
     id: 'ask',
     label: '이 페이지에 대해 질문',
     hint: '페이지를 붙여 두고 이어서 물어봅니다',
@@ -217,12 +233,32 @@ export function findPreset(id: string): Preset | undefined {
 
 /* ── 슬래시 커맨드 (Phase 4-3) ─────────────────────────── */
 
+/**
+ * 명령의 접두 문자. **결과가 남는 곳**을 가른다.
+ *
+ * - `/` 답이 AI 창 안에서 끝난다.
+ * - `@` 결과가 다른 탭에 남는다. 화면은 저절로 옮겨 가지 않고, 답변 안의 링크를 눌러야 간다.
+ */
+export type CommandPrefix = '/' | '@';
+
+/** `@` 명령이 결과를 남기는 탭. */
+export type PanelTab = 'schedule';
+
 export interface SlashCommand {
+  /**
+   * 접두 문자.
+   *
+   * ★ 이름(`slash`, `aliases`)은 접두 문자를 **포함한** 전체 문자열이다. 입력창은 실제로
+   *   친 이름의 길이만큼 잘라 인자를 뽑으므로, 이름에서 접두 문자를 떼면 인자가 어긋난다.
+   */
+  prefix: CommandPrefix;
   slash: string;
   label: string;
   hint: string;
   presetId: string;
   needs: PresetNeeds;
+  /** `@` 명령이 끝나고 넘어갈 탭. 자동완성의 뱃지도 이 값으로 그린다. */
+  opensTab?: PanelTab;
   /** 자동완성에서 함께 매치될 다른 이름들 */
   aliases?: string[];
   /** 사용자 정의 프리셋인가 */
@@ -242,6 +278,8 @@ export interface CustomPreset {
 
 export function builtinCommands(): SlashCommand[] {
   return ALL_PRESETS.filter((p) => p.slash).map((p) => ({
+    // 내장 프리셋의 답은 모두 AI 창 안에서 끝난다.
+    prefix: '/' as const,
     slash: p.slash!,
     label: p.label,
     hint: p.hint ?? '',
@@ -258,6 +296,8 @@ export function namesOf(c: SlashCommand): string[] {
 
 export function customCommands(customs: CustomPreset[]): SlashCommand[] {
   return customs.map((c) => ({
+    // 사용자 프리셋의 결과도 AI 창에 나타난다. 그래서 언제나 `/` 그룹이다.
+    prefix: '/' as const,
     slash: `/${c.slash}`,
     label: c.label,
     hint: '내 프리셋',
@@ -267,23 +307,72 @@ export function customCommands(customs: CustomPreset[]): SlashCommand[] {
   }));
 }
 
+/** 이 글자로 명령이 시작될 수 있는가. */
+export function isCommandPrefix(ch: string): ch is CommandPrefix {
+  return ch === '/' || ch === '@';
+}
+
 /**
- * 입력창 내용에서 슬래시 커맨드 후보를 찾는다.
+ * 입력창 내용에서 명령 후보를 찾는다.
  *
- * 첫 글자가 `/`이고 아직 공백이 없을 때만 자동완성을 띄운다.
- * 본문 중간의 `/`(URL, 날짜 등)를 건드리면 방해만 된다.
+ * 첫 글자가 `/` 또는 `@`이고 아직 공백이 없을 때만 자동완성을 띄운다.
+ * 본문 중간의 `/`(URL, 날짜 등)나 `@`(전자우편 주소)를 건드리면 방해만 된다.
+ *
+ * ★ 친 접두 문자와 같은 그룹만 보여 준다. 두 그룹을 섞어 보이면 접두 문자로 결과가
+ *   어디에 나타나는지 알린다는 구분 자체가 무의미해진다.
+ *
+ * ★ 다만 같은 그룹에 맞는 것이 하나도 없으면 반대 그룹에서 찾아 보여 준다. 명령이
+ *   그룹을 옮겼을 때 예전 이름을 친 사람에게 빈 목록 대신 새 이름을 보여 주는 길이다.
+ *   골라 넣으면 입력이 새 이름으로 바뀌므로 한 번에 옮겨 배운다.
  */
 export function matchSlash(
   input: string,
   commands: SlashCommand[],
 ): SlashCommand[] {
-  if (!input.startsWith('/')) return [];
+  const head = input.slice(0, 1);
+  if (!isCommandPrefix(head)) return [];
   const token = input.slice(1);
   if (/\s/.test(token)) return [];
   const q = token.toLowerCase();
-  return commands.filter((c) =>
+  const hits = commands.filter((c) =>
     namesOf(c).some((n) => n.slice(1).toLowerCase().startsWith(q)),
   );
+  const sameGroup = hits.filter((c) => c.prefix === head);
+  return sameGroup.length ? sameGroup : hits;
+}
+
+/**
+ * 다 쓰고 Enter를 친 한 줄에서 실행할 명령과 인자를 가려낸다.
+ *
+ * ★ 접두 문자가 어긋나도 이름이 맞으면 찾아 준다. 명령이 그룹을 옮겼는데 예전 이름을
+ *   친 사람의 입력이 그대로 모델에게 보내지면, 명령이 사라진 것처럼 보이고 토큰까지 쓴다.
+ *   접두 문자가 맞는 명령을 먼저 보고, 없을 때만 이름으로 찾는다.
+ */
+export function resolveTyped(
+  input: string,
+  commands: SlashCommand[],
+): { cmd: SlashCommand; rest: string } | null {
+  const text = input.trim();
+  const head = text.slice(0, 1);
+  if (!isCommandPrefix(head)) return null;
+  const body = text.slice(1).toLowerCase();
+
+  /** 이 명령의 이름 중 하나로 시작하는가. 맞으면 접두 문자를 뺀 이름 길이. */
+  const nameLength = (c: SlashCommand): number => {
+    for (const full of namesOf(c)) {
+      const name = full.slice(1).toLowerCase();
+      if (body === name || body.startsWith(`${name} `)) return name.length;
+    }
+    return -1;
+  };
+
+  for (const group of [commands.filter((c) => c.prefix === head), commands]) {
+    for (const c of group) {
+      const len = nameLength(c);
+      if (len >= 0) return { cmd: c, rest: text.slice(1 + len).trim() };
+    }
+  }
+  return null;
 }
 
 /** 슬래시 커맨드를 실제 프롬프트로 바꾼다. */

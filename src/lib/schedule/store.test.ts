@@ -25,7 +25,7 @@ describe('addTask', () => {
 });
 
 describe('addTasks', () => {
-  it('★ 같은 공문을 다시 분석해도 같은 할 일이 두 번 쌓이지 않는다', async () => {
+  it('★ 같은 문서를 다시 분석해도 같은 할 일이 두 번 쌓이지 않는다', async () => {
     const key = dedupeKeyOf('공모전 안내', '계획서 제출');
     const first = await addTasks([input({ dedupeKey: key })]);
     expect(first.added).toHaveLength(1);
@@ -43,7 +43,7 @@ describe('addTasks', () => {
   });
 
   it('한 번에 보낸 목록 안의 중복도 한 건만 등록한다', async () => {
-    const key = dedupeKeyOf('공문', '제출');
+    const key = dedupeKeyOf('문서', '제출');
     const result = await addTasks([input({ dedupeKey: key }), input({ dedupeKey: key })]);
     expect(result.added).toHaveLength(1);
     expect(result.skipped).toBe(1);

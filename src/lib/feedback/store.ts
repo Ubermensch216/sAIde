@@ -8,7 +8,7 @@
  *
  * ★ 밖으로 나가지 않는다.
  *   전부 이 브라우저의 IndexedDB에만 쌓인다. 문서 제목조차 넣지 않는다 — 수치를 보는 데
- *   필요하지 않고, 남기면 공문 제목 목록이 한곳에 모이는 꼴이 된다.
+ *   필요하지 않고, 남기면 문서 제목 목록이 한곳에 모이는 꼴이 된다.
  *
  * ★ 한 번 누르면 바꿀 수 있어야 한다. 같은 대상(targetKey)에 다시 누르면 덮어쓴다.
  *   잘못 누른 값이 통계에 영구히 남으면 사용자가 아예 누르지 않게 된다.
@@ -17,7 +17,7 @@
 import { db } from '@/lib/storage/db';
 
 /** 무엇에 대한 평가인가. 정확도의 성격이 달라 섞어 세지 않는다. */
-export type FeedbackKind = 'action-card' | 'task-candidate' | 'summary' | 'inbox-relevance';
+export type FeedbackKind = 'action-card' | 'task-candidate' | 'summary';
 export type FeedbackVerdict = 'good' | 'bad';
 
 export interface FeedbackEntry {
@@ -81,7 +81,7 @@ export interface FeedbackSummary {
   lastAt: number | null;
 }
 
-const KINDS: FeedbackKind[] = ['action-card', 'task-candidate', 'summary', 'inbox-relevance'];
+const KINDS: FeedbackKind[] = ['action-card', 'task-candidate', 'summary'];
 
 export function summarizeFeedback(rows: FeedbackEntry[]): FeedbackSummary {
   const buckets = KINDS.map(kind => ({

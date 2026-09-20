@@ -7,12 +7,12 @@
  * ★ ICS는 달력용이다. 달력에 넣을 수 있는 것은 날짜가 있는 남은 일뿐이므로 그것만 담는다.
  *
  * ★ CSV 수식 주입을 막는다(계획서 §8.2). `=`, `+`, `-`, `@`, 탭, 개행으로 시작하는 칸은
- *   엑셀·한셀이 수식으로 읽는다. 공문 제목에 "-"로 시작하는 항목이 흔해 실제로 걸린다.
+ *   엑셀·한셀이 수식으로 읽는다. 문서 제목에 "-"로 시작하는 항목이 흔해 실제로 걸린다.
  */
 
 import type { ScheduleTask } from './task';
 
-const CSV_HEADER = ['기한', '시각', '상태', '할 일', '제출물', '문의처', '근거 문장', '원문 확인', '연도 추정', '출처 공문', '출처 주소', '등록일', '완료일'];
+const CSV_HEADER = ['기한', '시각', '상태', '할 일', '제출물', '문의처', '근거 문장', '원문 확인', '연도 추정', '출처 문서', '출처 주소', '등록일', '완료일'];
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -94,7 +94,7 @@ export function tasksToIcs(tasks: ScheduleTask[], now: Date = new Date()): strin
     if (task.status === 'done' || !task.dueDate) continue;
     const description = [
       task.evidence ? `근거: ${task.evidence}` : '',
-      task.source?.docTitle ? `출처 공문: ${task.source.docTitle}` : '',
+      task.source?.docTitle ? `출처 문서: ${task.source.docTitle}` : '',
       task.deliverables?.length ? `제출물: ${task.deliverables.join(' / ')}` : '',
       task.contact ? `문의처: ${task.contact}` : '',
       task.notes ?? '',
@@ -121,7 +121,7 @@ export function tasksToIcs(tasks: ScheduleTask[], now: Date = new Date()): strin
 
 /** 내보낼 파일 이름. 날짜를 붙여 여러 번 받아도 덮어쓰지 않는다. */
 export function exportFileName(extension: 'csv' | 'ics', now: Date = new Date()): string {
-  return `온나라-sAIde-일정-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}.${extension}`;
+  return `sAIde-일정-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}.${extension}`;
 }
 
 /**

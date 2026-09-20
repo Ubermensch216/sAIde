@@ -2,7 +2,7 @@
  * 문서 분석 결과 캐시 (B1).
  *
  * ★ 여기서 지키는 것 셋.
- *   ① **본문이 바뀌면 재사용하지 않는다.** 이게 깨지면 정정 공문에 지난 요약이 붙는다 —
+ *   ① **본문이 바뀌면 재사용하지 않는다.** 이게 깨지면 정정판에 지난 요약이 붙는다 —
  *      배지와 원문 대조로 쌓아 온 신뢰가 한 번에 무너지는 종류의 사고다.
  *   ② 같은 문서·명령·지시·모델이면 같은 자리에 덮어쓴다. 자동 증가 키면 같은 분석이 계속 쌓인다.
  *   ③ 지시나 모델이 다르면 다른 결과다. 한 자리를 공유하면 `/요약 예산 위주로`의 결과가
@@ -25,7 +25,7 @@ import {
 } from './doc-results';
 
 const LOOKUP: DocResultLookup = {
-  identity: documentIdentity({ listName: '문서등록대장', title: '예산 편성 지침 통보', reportDate: '2026. 9. 30.' }),
+  identity: documentIdentity({ listName: 'docs.example.com', title: '예산 편성 지침 통보', reportDate: '2026. 9. 30.' }),
   command: 'summary',
   instruction: '이 문서의 내용을 요약해줘.',
   model: 'gemma4:e2b',
@@ -37,12 +37,12 @@ beforeEach(async () => {
 
 describe('문서 정체성', () => {
   it('공백과 대소문자 표기가 달라도 같은 문서로 본다', () => {
-    const a = documentIdentity({ listName: '문서등록대장', title: '예산  편성 지침', reportDate: '2026. 9. 30.' });
-    const b = documentIdentity({ listName: '문서등록대장', title: ' 예산 편성 지침 ', reportDate: '2026. 9. 30.' });
+    const a = documentIdentity({ listName: 'docs.example.com', title: '예산  편성 지침', reportDate: '2026. 9. 30.' });
+    const b = documentIdentity({ listName: 'docs.example.com', title: ' 예산 편성 지침 ', reportDate: '2026. 9. 30.' });
     expect(a).toBe(b);
   });
 
-  // ★ 해마다 같은 제목의 공문이 온다. 보고일자를 빼면 작년 요약이 올해 공문에 붙는다.
+  // ★ 해마다 같은 제목의 문서가 온다. 보고일자를 빼면 작년 요약이 올해 문서에 붙는다.
   it('보고일자가 다르면 다른 문서다', () => {
     const last = documentIdentity({ title: '예산 편성 지침', reportDate: '2025. 9. 30.' });
     const now = documentIdentity({ title: '예산 편성 지침', reportDate: '2026. 9. 30.' });
@@ -69,7 +69,7 @@ describe('읽기와 쓰기', () => {
     expect(hit?.content).toBe('요약 결과');
   });
 
-  // ★ 이 프로젝트에서 가장 중요한 한 줄이다. 정정 공문에 지난 요약을 보여 주지 않는다.
+  // ★ 이 프로젝트에서 가장 중요한 한 줄이다. 정정판에 지난 요약을 보여 주지 않는다.
   it('★ 본문이 바뀌면 없는 것으로 친다', async () => {
     await saveDocResult(LOOKUP, { bodyRevision: bodyRevision('처음 본문'), content: '옛 요약' });
 
@@ -95,7 +95,7 @@ describe('읽기와 쓰기', () => {
   });
 
   // ★ 등록 카드가 살아나야 캐시가 "결과를 그대로 보여 준 것"이 된다.
-  it('일정 후보와 출처 공문까지 복원한다', async () => {
+  it('일정 후보와 출처 문서까지 복원한다', async () => {
     const revision = bodyRevision('본문');
     await saveDocResult({ ...LOOKUP, command: 'actions' }, {
       bodyRevision: revision,

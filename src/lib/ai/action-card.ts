@@ -1,5 +1,5 @@
 /**
- * 공문 핵심·조치사항 카드 (계획서 S01).
+ * 문서 핵심·조치사항 카드 (계획서 S01).
  *
  * ★ 소형 모델(gemma4:e2b)은 자유 형식으로 쓰게 하면 항목을 빠뜨리거나 날짜를 바꿔 쓴다.
  *   그래서 JSON 스키마로만 답하게 하고, 사용자에게 보여 주기 전에 코드가 원문과 대조한다.
@@ -34,8 +34,8 @@ export const ACTION_CARD_SCHEMA = {
 
 export function actionCardInstruction(title: string): string {
   return [
-    `첨부된 페이지 내용은 공문 '${title}'의 상세 화면이다. 이 공문을 받은 부서가 해야 할 일을 정리해 JSON으로만 답하라.`,
-    'summary: 공문의 요지를 1~2문장으로.',
+    `첨부된 페이지 내용은 문서 '${title}'의 상세 화면이다. 이 문서를 받은 부서가 해야 할 일을 정리해 JSON으로만 답하라.`,
+    'summary: 문서의 요지를 1~2문장으로.',
     'actions: 받은 부서가 해야 할 일. task는 짧은 동사형 문장, evidence는 그 근거가 되는 원문 문장을 그대로 옮겨 적는다.',
     'deliverables: 제출하거나 회신해야 하는 자료 이름. 없으면 빈 배열.',
     'deadlines: 기한. date는 원문에 적힌 날짜 표기 그대로, what은 그날까지 할 일, evidence는 원문 문장 그대로.',
@@ -63,7 +63,7 @@ const DATE_PATTERNS: RegExp[] = [
   /(?:(\d{4})\s*[.\-/년]\s*)?(\d{1,2})\s*[.\-/월]\s*(\d{1,2})\s*[.일]?(?:\s*\([월화수목금토일]\))?/g,
 ];
 
-/** 공문식 날짜(2026. 9. 30.(수), 9월 30일, 2026-09-30)를 찾는다. */
+/** 한국어 날짜 표기(2026. 9. 30.(수), 9월 30일, 2026-09-30)를 찾는다. */
 export function findDates(text: string): FoundDate[] {
   const found: FoundDate[] = [];
   for (const pattern of DATE_PATTERNS) {
@@ -80,7 +80,7 @@ export function findDates(text: string): FoundDate[] {
   return found;
 }
 
-/** 같은 날짜인가. 한쪽에 연도가 없으면 월·일만 비교한다(공문은 연도를 자주 생략한다). */
+/** 같은 날짜인가. 한쪽에 연도가 없으면 월·일만 비교한다(문서는 연도를 자주 생략한다). */
 export function sameDate(a: FoundDate, b: FoundDate): boolean {
   return a.month === b.month && a.day === b.day && (a.year === undefined || b.year === undefined || a.year === b.year);
 }

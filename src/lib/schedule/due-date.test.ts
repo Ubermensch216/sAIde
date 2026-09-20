@@ -4,7 +4,7 @@ import { findTime, normalizeDueDate, parseReferenceDate } from './due-date';
 const REPORT_DAY = new Date(2026, 8, 18); // 2026-09-18
 
 describe('normalizeDueDate', () => {
-  it('연도가 적힌 공문식 날짜를 그대로 읽는다', () => {
+  it('연도가 적힌 한국어 날짜 표기를 그대로 읽는다', () => {
     expect(normalizeDueDate('2026. 9. 30.(수)', REPORT_DAY))
       .toEqual({ date: '2026-09-30', text: '2026. 9. 30.(수)', yearInferred: false });
   });
@@ -19,7 +19,7 @@ describe('normalizeDueDate', () => {
   });
 
   it('★ 기준일보다 한참 지난 날짜는 내년 기한으로 본다', () => {
-    // 9월에 받은 공문의 "1. 15.까지"는 지난 1월이 아니라 다음 1월이다.
+    // 9월에 받은 문서의 "1. 15.까지"는 지난 1월이 아니라 다음 1월이다.
     expect(normalizeDueDate('1월 15일', REPORT_DAY)?.date).toBe('2027-01-15');
   });
 
@@ -28,7 +28,7 @@ describe('normalizeDueDate', () => {
   });
 
   it('★ 기준일은 오늘이 아니라 문서 보고일자다', () => {
-    // 작년 12월 공문을 오늘 정리해도 "1. 5.까지"는 그 다음 1월이어야 한다.
+    // 작년 12월 문서를 오늘 정리해도 "1. 5.까지"는 그 다음 1월이어야 한다.
     expect(normalizeDueDate('1월 5일', new Date(2025, 11, 20))?.date).toBe('2026-01-05');
   });
 
@@ -51,7 +51,7 @@ describe('normalizeDueDate', () => {
   });
 
   it('항목 번호를 날짜로 오인하지 않는다', () => {
-    // "1. 2." 같은 공문 항목 번호. findDates가 걸러 낸다.
+    // "1. 2." 같은 문서 항목 번호. findDates가 걸러 낸다.
     expect(normalizeDueDate('1. 2.', REPORT_DAY)).toBeNull();
   });
 });

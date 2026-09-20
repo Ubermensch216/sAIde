@@ -89,7 +89,7 @@ function toNewTask(title: string, date: string, time: string | undefined, notes:
     ? {
         date,
         ...(time ? { time } : {}),
-        // ★ 원문에 적힌 표기 그대로라는 약속을 지킨다. 여기서 "원문"은 공문이 아니라
+        // ★ 원문에 적힌 표기 그대로라는 약속을 지킨다. 여기서 "원문"은 문서가 아니라
         //   사용자가 친 문장이다. 며칠 뒤 목록만 보고도 무슨 말로 넣었는지 되짚을 수 있다.
         text: typed,
         // 사용자가 직접 말한 기한이다. 코드가 연도를 추론한 것이 아니다.
@@ -103,7 +103,7 @@ function toNewTask(title: string, date: string, time: string | undefined, notes:
     dueDate: date,
     ...(due ? { due } : {}),
     ...(notes ? { notes } : {}),
-    // ★ dedupeKey를 붙이지 않는다. 공문에서 뽑은 후보와 달리 사용자가 직접 적은 항목은
+    // ★ dedupeKey를 붙이지 않는다. 문서에서 뽑은 후보와 달리 사용자가 직접 적은 항목은
     //   같은 문장을 일부러 두 번 적을 수 있다(store.ts의 addTasks 주석과 같은 규칙).
   };
 }
@@ -201,7 +201,7 @@ export function patchFor(task: ScheduleTask, changes: TaskChanges): Partial<Omit
       patch.due = {
         date,
         ...(time ? { time } : {}),
-        // 사용자가 직접 고친 값이다. 공문 표기를 그대로 둘 수 없다.
+        // 사용자가 직접 고친 값이다. 문서 표기를 그대로 둘 수 없다.
         text: time ? `${date} ${time}` : date,
         yearInferred: false,
       };

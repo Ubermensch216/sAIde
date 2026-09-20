@@ -94,7 +94,7 @@ describe('dedupeKeyOf', () => {
     expect(dedupeKeyOf('공모전 안내', '계획서  제출')).toBe(dedupeKeyOf('공모전  안내', '계획서 제출'));
   });
 
-  it('다른 공문의 같은 할 일은 다른 항목이다', () => {
-    expect(dedupeKeyOf('공문 A', '계획서 제출')).not.toBe(dedupeKeyOf('공문 B', '계획서 제출'));
+  it('다른 문서의 같은 할 일은 다른 항목이다', () => {
+    expect(dedupeKeyOf('문서 A', '계획서 제출')).not.toBe(dedupeKeyOf('문서 B', '계획서 제출'));
   });
 });

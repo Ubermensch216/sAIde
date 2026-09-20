@@ -51,6 +51,15 @@ import { ConversationMenu } from './components/ConversationMenu';
 import { PageContextChip } from './components/PageContextChip';
 import { PageActions } from './components/PageActions';
 import { ScreenshotChip } from './components/ScreenshotChip';
+import { SchedulePanel } from './components/SchedulePanel';
+import { ScheduleIntentCard } from './components/ScheduleIntentCard';
+import { Onboarding } from './components/Onboarding';
+import { shouldShowOnboarding } from '@/lib/storage/onboarding';
+import { focusSchedule, focusScheduleTask, refreshTasks, useSchedule } from '@/lib/schedule/store';
+import { urgentCount } from '@/lib/schedule/task';
+import { SCHEDULE_ALIASES, SCHEDULE_PRESET_ID, SCHEDULE_SLASH } from '@/lib/schedule/intent';
+import type { PanelLink } from '@/lib/panel/links';
+import { decideTabChange } from '@/lib/browser/panel-sync';
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -71,10 +80,31 @@ export default function App() {
    * 기본 꺼짐인 이유는 비용이다 — 툴 8종 설명이 매 턴 프리필에 들어간다.
    */
   const [agentMode, setAgentMode] = useState(false);
+  /**
+   * AI 대화와 일정 보드를 탭으로 나눈다.
+   *
+   * ★ 결과를 믿는 방식이 다르다 — AI 답변은 검토가 필요하고, 일정은 사용자가 확인해
+   *   등록한 사실이다. 같은 화면에 섞으면 그 구분이 지워진다.
+   */
+  const [view, setView] = useState<View>(initialView);
+  /** 첫 실행 안내. 저장소를 읽어 한 번만 켠다. */
+  const [onboarding, setOnboarding] = useState(false);
+  // 기한이 임박한 일정은 어느 탭에 있든 보여야 한다. 그러려고 배지를 헤더가 아니라 탭에 둔다.
+  const dueTasks = useSchedule(state => urgentCount(state.tasks));
   const warmedFor = useRef('');
 
   const t = useT();
   const chat = useChat();
+
+  useEffect(() => {
+    try { localStorage.setItem(VIEW_KEY, view); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
+  }, [view]);
+
+  // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
+  useEffect(() => { void refreshTasks(); }, []);
+
+  // 처음 여는 사람에게는 `/`와 `@`의 규칙을 아무도 알려 주지 않았다.
+  useEffect(() => { void shouldShowOnboarding().then(setOnboarding); }, []);
 
   /* ── 설정 ── */
   useEffect(() => {
@@ -150,13 +180,27 @@ export default function App() {
     const open = (t: TabSummary | null) => {
       if (!alive || !t || t.tabId < 0) return;
 
-      const prev = currentTab.current;
-      const same = prev && prev.tabId === t.tabId && sameDocument(prev.url, t.url);
+      /**
+       * ★ 세 갈래로 가른다(lib/browser/panel-sync.ts).
+       *   ignore — 다른 창의 일이다. 패널은 그대로 둔다.
+       *   follow — 같은 작업의 연장(팝업·같은 문서 재방문). 대상 탭만 옮기고 대화는 지킨다.
+       *   switch — 다른 문서다. 그 문서의 대화로 갈아끼운다.
+       *
+       *   예전에는 탭 id와 주소만 비교해 팝업도 `switch`로 처리했다. 목록에서 항목을 하나
+       *   열었을 뿐인데 방금까지의 문답과 붙여 둔 본문이 함께 사라졌다.
+       */
+      const decision = decideTabChange(
+        { windowId: currentTab.current?.windowId ?? null, tab: currentTab.current },
+        t,
+      );
+      if (decision === 'ignore') return;
 
       currentTab.current = t;
       setTab(t);
-      if (same) return;
-
+      if (decision === 'follow') {
+        void chat.followTab(t.tabId, t.url);
+        return;
+      }
       void chat.openForTab(t.tabId, t.url);
     };
 
@@ -167,6 +211,9 @@ export default function App() {
     const listener = (msg: SWToPanel) => {
       if (msg.type === 'TAB_CHANGED') {
         open(msg.tab);
+      } else if (msg.type === 'SCREEN_CHANGED') {
+        // 주소는 그대로인데 화면만 바뀌었다. 붙여 둔 본문을 지난 것으로 본다.
+        if (msg.tabId === currentTab.current?.tabId) chat.noteScreenChange(msg.frameId);
       } else if (msg.type === 'CONTEXT_MENU') {
         handleContextMenu(msg.preset, msg.selectionText);
       }
@@ -369,9 +416,21 @@ export default function App() {
       ...builtinCommands(),
       // 기억이 꺼져 있으면 목록에 띄우지 않는다. 눌러도 아무 일이 없는
       // 항목을 보여 주는 것은 안내가 아니라 소음이다.
+      {
+        // `@`는 결과가 다른 탭에 남는다는 표시다. 화면은 저절로 옮겨 가지 않는다.
+        prefix: '@' as const,
+        slash: SCHEDULE_SLASH,
+        label: t('sint.command'),
+        hint: t('sint.commandHint'),
+        presetId: SCHEDULE_PRESET_ID,
+        needs: 'none' as const,
+        opensTab: 'schedule' as const,
+        aliases: SCHEDULE_ALIASES,
+      },
       ...(settings.memoryEnabled
         ? [
             {
+              prefix: '/' as const,
               slash: RECALL_SLASH,
               label: t('mem.search.title'),
               hint: t('mem.search.hint'),
@@ -388,6 +447,18 @@ export default function App() {
 
   const runSlash = async (cmd: SlashCommand, rest: string) => {
     setDraft('');
+
+    // ★ `@일정`은 모델에게 분류만 시킨다. 목록과 답변 문장은 코드가 저장소를 읽어 만든다.
+    if (cmd.presetId === SCHEDULE_PRESET_ID) {
+      if (!rest.trim()) {
+        // 명령 이름만 쳤다. 오류가 아니라 입력이 덜 끝난 것이므로 예문을 보여 주고 이어 쓰게 둔다.
+        setDraft(`${SCHEDULE_SLASH} `);
+        chat.setError({ code: 'SCHEDULE_INPUT_REQUIRED', message: '' });
+        return;
+      }
+      void chat.runScheduleIntent(rest, settings);
+      return;
+    }
 
     // ★ /기억은 프리셋이 아니다. 프롬프트를 펼치기 전에 임베딩과 검색을
     //   먼저 돌려야 한다. 찾은 것이 없으면 모델을 부르지 않는다 — 근거 없이
@@ -421,9 +492,28 @@ export default function App() {
       if (!ok) return;
     }
 
+    // ★ `/조치`는 프리셋 문구를 쓰지 않는다. JSON 스키마로 받고 코드가 원문과 대조한다.
+    if (cmd.presetId === 'actions') {
+      void chat.runActionCard(settings);
+      return;
+    }
+
     const text = expandCommand(cmd, rest, customs);
     if (text.trim()) void chat.send(text, settings);
   };
+
+  /**
+   * 답변 안의 `일정 탭에서 보기` 링크를 눌렀을 때.
+   *
+   * ★ 여기서만 화면이 옮겨진다. 어디를 볼지는 스토어에 남기고(focus), 그 탭이 스스로
+   *   반영한 뒤 비운다. 옮기는 일과 맞추는 일을 나눠 두면, 탭이 열려 있든 아니든 같다.
+   */
+  const followPanelLink = (link: PanelLink) => {
+    if ('taskId' in link) focusScheduleTask(link.taskId);
+    else if ('cursor' in link) focusSchedule(link.cursor, link.mode);
+    setView('schedule');
+  };
+
 
   /**
    * 오류 배너의 해결 버튼. 계획서 Phase 7-2
@@ -490,6 +580,27 @@ export default function App() {
         </button>
       </header>
 
+      <nav className="view-tabs" role="tablist" aria-label={t('view.tabs')}>
+        <button type="button" role="tab" aria-selected={view === 'ai'}
+          className={`view-tab ${view === 'ai' ? 'on' : ''}`} onClick={() => setView('ai')}>
+          {t('view.ai')}
+        </button>
+        <button type="button" role="tab" aria-selected={view === 'schedule'} onClick={() => setView('schedule')}
+          className={`view-tab sched ${view === 'schedule' ? 'on' : ''}`}
+          {...(dueTasks > 0 ? { 'aria-label': t('view.dueLabel', { n: dueTasks }) } : {})}>
+          {t('view.schedule')}
+          {/* 배지는 숫자만 둔다. 좁은 폭에서 문장을 넣으면 글자가 잘린다. */}
+          {dueTasks > 0 && <span className="view-tab-count due">{t('view.due', { n: dueTasks })}</span>}
+        </button>
+      </nav>
+
+      {view === 'schedule' ? (
+        <>
+          <main className="app-main"><SchedulePanel /></main>
+          {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
+        </>
+      ) : (
+      <>
       <HealthBanner health={health} model={settings.model} onRetry={refresh} />
       {warming && <WarmupProgress seconds={MEASURED_COLD_LOAD_SEC} />}
 
@@ -522,6 +633,11 @@ export default function App() {
             messages={chat.messages}
             dark={dark}
             showThinking={settings.thinkMode !== 'off'}
+            deleteDisabled={chat.streaming || chat.loading}
+            model={settings.model}
+            onDelete={chat.removeMessage}
+            onPanelLink={followPanelLink}
+            onOpenSchedule={() => setView('schedule')}
           />
         )}
       </main>
@@ -612,6 +728,15 @@ export default function App() {
           />
         )}
 
+        {/* 등록·수정·삭제는 예외 없이 이 카드를 거친다. 자동 저장 경로는 없다. */}
+        {chat.pendingSchedule && chat.pendingSchedule.plan.kind !== 'list'
+          && chat.pendingSchedule.plan.kind !== 'none' && (
+          <ScheduleIntentCard
+            plan={chat.pendingSchedule.plan}
+            onDecide={ids => void chat.commitSchedulePlan(ids)}
+          />
+        )}
+
         <Composer
           streaming={chat.streaming}
           disabled={blocked}
@@ -652,9 +777,34 @@ export default function App() {
           }}
         />
       )}
+      </>
+      )}
+      {view === 'ai' && onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
     </div>
   );
 }
+
+/* ── 탭 기억 ───────────────────────────────────────────── */
+
+/** 사이드패널의 탭. */
+type View = 'ai' | 'schedule';
+
+const VIEW_KEY = 'saide.view';
+
+/**
+ * 마지막에 보던 탭에서 다시 연다.
+ *
+ * ★ 저장소를 못 읽으면 AI 탭이다. 기억하지 못하는 것은 불편할 뿐이지만,
+ *   여기서 예외가 나면 패널 자체가 뜨지 않는다.
+ */
+const initialView: View = (() => {
+  try {
+    const saved = localStorage.getItem(VIEW_KEY);
+    return saved === 'schedule' ? 'schedule' : 'ai';
+  } catch {
+    return 'ai';
+  }
+})();
 
 /* ── 진행 표시 ─────────────────────────────────────────── */
 

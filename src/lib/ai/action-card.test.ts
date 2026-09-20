@@ -12,7 +12,7 @@ const source = [
   '3. 문의: 감사담당관 김OO(051-888-0000)',
 ].join('\n');
 
-it('공문식 날짜를 찾고 항목 번호는 날짜로 오인하지 않는다', () => {
+it('한국어 날짜 표기를 찾고 항목 번호는 날짜로 오인하지 않는다', () => {
   expect(findDates(source).map(date => [date.year, date.month, date.day])).toEqual([[2026, 10, 14], [2026, 9, 30]]);
   expect(findDates('1. 2. 3. 항목')).toEqual([]);
   expect(findDates('9월 30일까지')[0]).toMatchObject({ month: 9, day: 30 });

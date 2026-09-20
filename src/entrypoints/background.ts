@@ -22,6 +22,15 @@ import {
   type TabSummary,
 } from '@/lib/messaging/protocol';
 
+import { registerTaskAlerts } from '@/lib/schedule/alerts';
+import {
+  forgetPanelSpawn,
+  isReportedPanelTab,
+  notePanelSpawn,
+  panelOpener,
+  rememberPanelTab,
+} from '@/lib/browser/panel-sync';
+
 const INJECTED_SCRIPT = 'injected.js';
 
 export default defineBackground(() => {
@@ -32,6 +41,39 @@ export default defineBackground(() => {
   //   저장소에서 읽어 한 번 맞춰 두고, 이후 설정 변경도 따라간다.
   void loadSettings().then((s) => setLocale(s.locale));
   onSettingsChanged((s) => setLocale(s.locale));
+
+  /**
+   * 기한 알림. 패널을 닫아 두어도 알려야 하므로 워커가 맡는다.
+   *
+   * ★ 최상위에서 건다. 서비스 워커는 이벤트마다 깨었다 죽으므로,
+   *   깨어날 때마다 처리기가 붙어 있어야 한다.
+   */
+  registerTaskAlerts();
+
+  /**
+   * 팝업의 부모 탭을 기록한다.
+   *
+   * ★ 새 창으로 뜬 팝업은 `openerTabId`가 비어 있어 탭 정보만으로는 출처를 알 수 없다.
+   *   webNavigation 이벤트로만 알 수 있으므로 여기에 적어 둔다. 이 기록이 없으면
+   *   패널은 사용자가 연 팝업을 "다른 문서"로 보고 대화를 빈 것으로 갈아끼운다.
+   */
+  chrome.webNavigation?.onCreatedNavigationTarget?.addListener(notePanelSpawn);
+
+  /**
+   * 같은 탭 안에서 화면(프레임)이 바뀌었다고 알린다.
+   *
+   * ★ 프레임으로 화면을 갈아 끼우는 사이트는 문서를 골라도 탭 주소가 그대로다.
+   *   주소 비교만으로는 알 수 없어, 붙여 둔 본문이 다른 문서인 채로 답이 만들어진다.
+   *
+   * ★ 모든 프레임 이동을 보내지 않는다. 광고 프레임이 많은 탭 하나 때문에 패널이 쉼 없이
+   *   깨어난다. 패널이 실제로 보고 있다고 보고받은 탭만 알린다.
+   */
+  chrome.webNavigation?.onCommitted?.addListener(notifyScreenChange);
+  chrome.webNavigation?.onHistoryStateUpdated?.addListener(notifyScreenChange);
+  chrome.tabs.onRemoved.addListener(tabId => {
+    forgetPanelSpawn(tabId);
+    pushToPanel({ type: 'TAB_CLOSED', tabId });
+  });
 
   // 툴바 아이콘 클릭 → 사이드패널. 이 한 줄이 없으면 아이콘이 아무 반응도 없다.
   chrome.sidePanel
@@ -141,7 +183,10 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
   switch (msg.type) {
     case 'GET_ACTIVE_TAB': {
       const tab = await activeTab();
-      return { type: 'ACTIVE_TAB', tab: tab ? toSummary(tab) : null };
+      const summary = tab ? toSummary(tab) : null;
+      // 패널이 지금 보는 탭을 기억해 둔다. 화면 전환 알림을 그 탭에만 보내기 위해서다.
+      if (summary) rememberPanelTab(summary);
+      return { type: 'ACTIVE_TAB', tab: summary };
     }
 
     case 'LIST_TABS': {
@@ -259,15 +304,26 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
 }
 
 function toSummary(tab: chrome.tabs.Tab): TabSummary {
+  // ★ 창과 부모 탭을 함께 싣는다. 이 둘이 없으면 패널은 다른 창의 팝업까지 따라가
+  //   대화를 갈아끼운다(lib/browser/panel-sync.ts).
+  const openedFrom = tab.openerTabId ?? panelOpener(tab.id);
   return {
     tabId: tab.id ?? -1,
     url: tab.url ?? '',
     title: tab.title ?? '',
     active: tab.active ?? false,
+    ...(typeof tab.windowId === 'number' ? { windowId: tab.windowId } : {}),
+    ...(typeof openedFrom === 'number' ? { openedFrom } : {}),
   };
+}
+
+function notifyScreenChange(details: { tabId: number; frameId: number; url?: string }): void {
+  if (!isReportedPanelTab(details.tabId)) return;
+  pushToPanel({ type: 'SCREEN_CHANGED', tabId: details.tabId, frameId: details.frameId, url: details.url ?? '' });
 }
 
 /** 패널이 닫혀 있으면 수신자가 없어 예외가 난다. 정상 상황이므로 삼킨다. */
 function pushToPanel(msg: SWToPanel) {
+  if (msg.type === 'TAB_CHANGED') rememberPanelTab(msg.tab);
   chrome.runtime.sendMessage(msg).catch(() => undefined);
 }

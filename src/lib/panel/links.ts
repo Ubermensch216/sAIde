@@ -44,7 +44,7 @@ export function panelLink(target: PanelLink): string {
 /**
  * 링크 주소를 갈 곳으로 되읽는다. 우리가 만든 형태가 아니면 null이다.
  *
- * ★ 느슨하게 읽지 않는다. 답변 본문에는 공문에서 온 글자가 섞이므로, 조금이라도
+ * ★ 느슨하게 읽지 않는다. 답변 본문에는 문서에서 온 글자가 섞이므로, 조금이라도
  *   어긋나면 링크가 아닌 것으로 본다.
  */
 export function parsePanelLink(href: string | null | undefined): PanelLink | null {

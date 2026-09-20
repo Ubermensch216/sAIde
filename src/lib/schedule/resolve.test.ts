@@ -60,7 +60,7 @@ describe('planFor — 등록', () => {
   });
 
   it('★ 사용자가 직접 적은 항목에는 dedupeKey를 붙이지 않는다', () => {
-    // 공문에서 뽑은 후보와 달리, 같은 문장을 일부러 두 번 적을 수 있다.
+    // 문서에서 뽑은 후보와 달리, 같은 문장을 일부러 두 번 적을 수 있다.
     const plan = planFor({ intent: 'schedule.create', payload: { title: 'x', date: '' } }, BOARD, 'x');
     if (plan.kind !== 'create') throw new Error('create여야 한다');
     expect(plan.task.dedupeKey).toBeUndefined();

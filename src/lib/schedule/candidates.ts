@@ -43,7 +43,7 @@ function overlaps(a: string, b: string): boolean {
 /**
  * 기한 문구가 어느 할 일에 붙는가.
  *
- * ★ 근거 문장이 같다는 것만으로 묶지 않는다. 한 문장에 서로 다른 조치가 함께 적힌 공문이 흔하고,
+ * ★ 근거 문장이 같다는 것만으로 묶지 않는다. 한 문장에 서로 다른 조치가 함께 적힌 문서가 흔하고,
  *   그때 묶어 버리면 할 일 하나가 목록에서 사라진다. 낱말이 겹치는지까지 확인한 뒤에 묶는다.
  *   묶을지 말지 애매하면 따로 둔다 — 중복은 사용자가 체크를 풀면 되지만, 빠진 할 일은 보이지 않는다.
  */
@@ -71,7 +71,7 @@ function titleFromSentence(sentence: string): string {
  * 후보를 만든다.
  *
  * @param card 모델이 낸 핵심·조치사항 카드
- * @param source 공문 원문(대조 기준)
+ * @param source 문서 원문(대조 기준)
  * @param reference 연도가 없는 기한을 해석할 기준일(문서 보고일자 → 없으면 오늘)
  */
 export function buildTaskCandidates(card: ActionCard, source: string, reference: Date = new Date()): TaskCandidate[] {

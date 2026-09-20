@@ -1,11 +1,11 @@
 /**
- * 일정 항목(계획서 S07 · P4-4). 공문에서 뽑은 "내가 할 일"과 그 기한.
+ * 일정 항목(계획서 S07 · P4-4). 문서에서 뽑은 "내가 할 일"과 그 기한.
  *
  * ★ 이것은 캘린더 이벤트가 아니라 **업무 항목**이다. 회의 시간이 아니라 처리 기한이 중심이고,
  *   대부분 종일 기한이며, 완료 여부가 있다. 그래서 시작·종료 시각을 가진 이벤트 모델 대신
  *   기한 하나 + 상태를 쓴다. (참조 프로젝트의 달력은 시작·종료가 있는 약속 모델이다.)
  *
- * ★ 근거를 지우지 않는다. 어느 공문의 어느 문장에서 나온 할 일인지, 그 문장이 원문에서
+ * ★ 근거를 지우지 않는다. 어느 문서의 어느 문장에서 나온 할 일인지, 그 문장이 원문에서
  *   확인됐는지를 항목에 함께 저장한다. 사용자가 며칠 뒤 목록만 보고도 되짚을 수 있어야 한다.
  */
 
@@ -13,10 +13,10 @@ import type { TaskDue } from './due-date';
 
 export type TaskStatus = 'todo' | 'done';
 
-/** 이 할 일이 나온 공문. 목록에서 원문으로 되돌아가는 통로다. */
+/** 이 할 일이 나온 문서. 목록에서 원문으로 되돌아가는 통로다. */
 export interface TaskSource {
   docTitle: string;
-  /** 문서 상세 화면 주소. 온나라는 세션에 따라 열리지 않을 수 있어 참고용이다. */
+  /** 문서 상세 화면 주소. 세션이 끊기면 열리지 않을 수 있어 참고용이다. */
   docUrl?: string;
   /** 어느 대화에서 나왔는가. 대화를 지워도 일정은 남는다(고아 참조 허용). */
   conversationId?: number;
@@ -47,7 +47,7 @@ export interface ScheduleTask {
   notes?: string;
   source?: TaskSource;
   /**
-   * 같은 공문의 같은 할 일을 두 번 등록하지 않기 위한 키.
+   * 같은 문서의 같은 할 일을 두 번 등록하지 않기 위한 키.
    * 사용자가 직접 만든 항목에는 없다(같은 문장을 일부러 두 번 적을 수 있다).
    */
   dedupeKey?: string;
@@ -126,7 +126,7 @@ export function urgentCount(tasks: ScheduleTask[], now: Date = new Date()): numb
   }).length;
 }
 
-/** 공문 제목 + 할 일 문장으로 만드는 중복 등록 방지 키. */
+/** 문서 제목 + 할 일 문장으로 만드는 중복 등록 방지 키. */
 export function dedupeKeyOf(docTitle: string, title: string): string {
   const compact = (text: string) => text.normalize('NFC').toLowerCase().replace(/\s+/g, '');
   return `${compact(docTitle)}|${compact(title)}`;
