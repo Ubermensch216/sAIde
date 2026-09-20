@@ -100,3 +100,68 @@ export function truncationNotice(r: BudgetResult): string | null {
   if (!r.truncated) return null;
   return `본문이 길어 앞부분 ${Math.round(r.keptRatio * 100)}%만 참조했습니다.`;
 }
+
+/* ── 프롬프트 예산 — 조립기와 전송 게이트의 공용 자 ───── */
+
+/**
+ * ★ 아래 상수·함수는 **자르는 쪽과 거부하는 쪽이 같은 자를 쓰게** 하려고 있다.
+ *
+ *   예전에는 context.ts가 `length / 2.5`와 이미지 262토큰으로 재서 컨텍스트를
+ *   조립하고, stream.ts가 estimateTokens(한국어 length/2.0)와 이미지 1024토큰으로
+ *   다시 쟀다. 두 자가 다르니 조립기가 "예산 안"이라고 판단한 컨텍스트를 전송
+ *   게이트가 HTTP 전에 되돌려 보냈다. 기본 설정(numCtx 4,096)에서 본문+캡처
+ *   조합은 예외 없이 거부됐다 — 한도 2,867토큰에 게이트 추정 3,191토큰.
+ *
+ *   그래서 두 쪽 모두 반드시 이 함수들을 통과해야 한다. 한쪽만 고치면 같은
+ *   버그가 반대 방향(조용한 컨텍스트 초과)으로 되살아난다.
+ */
+
+/**
+ * 프롬프트가 num_ctx를 다 먹으면 답할 자리가 없다.
+ * 생성 여유를 남기기 위해 컨텍스트의 70%만 프롬프트에 쓴다.
+ */
+export const PROMPT_BUDGET_RATIO = 0.7;
+
+/**
+ * 이미지 한 장의 프롬프트 비용.
+ *
+ * ★ 실측(2026-08-19, gemma4:e2b): 해상도와 거의 무관하게 약 260토큰이다
+ *   (1180x800 +262, 1536x864 +266). Gemma가 고정 타일 예산으로 정규화한다.
+ *
+ * ★ 이전 게이트가 쓰던 1,024는 근거 없는 보수치였고, 기본 컨텍스트에서
+ *   캡처 기능 자체를 불가능하게 만들었다. 추정이 빗나가도 Ollama는 앞쪽을
+ *   버릴 뿐 실패하지 않지만, 과대추정은 기능을 통째로 막는다. 모델을 바꿔
+ *   타일 예산이 크게 다르면 이 상수를 다시 재야 한다.
+ */
+export const IMAGE_TOKEN_COST = 262;
+
+/** 역할·구분자 등 메시지 한 건의 고정 부대비용. */
+export const MESSAGE_OVERHEAD_TOKENS = 8;
+
+/** 이 컨텍스트에서 프롬프트에 쓸 수 있는 토큰 수. */
+export function promptBudget(numCtx: number): number {
+  return Math.floor(numCtx * PROMPT_BUDGET_RATIO);
+}
+
+/** 비용 계산에 필요한 최소 형태. ChatMessage가 구조적으로 이를 만족한다. */
+export interface CostedMessage {
+  content: string;
+  images?: string[];
+  tool_calls?: unknown;
+}
+
+/** 메시지 한 건의 추정 프롬프트 비용. */
+export function messageTokens(m: CostedMessage): number {
+  return (
+    estimateTokens(m.content) +
+    (m.images?.length ?? 0) * IMAGE_TOKEN_COST +
+    (m.tool_calls ? estimateTokens(JSON.stringify(m.tool_calls)) : 0) +
+    MESSAGE_OVERHEAD_TOKENS
+  );
+}
+
+/** 요청 하나의 추정 프롬프트 비용. 도구 스키마도 매 턴 프리필에 들어간다. */
+export function promptTokens(messages: readonly CostedMessage[], tools?: unknown): number {
+  const body = messages.reduce((sum, m) => sum + messageTokens(m), 0);
+  return body + (tools ? estimateTokens(JSON.stringify(tools)) : 0);
+}

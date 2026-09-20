@@ -1,5 +1,5 @@
 import { abortable, idleSignal } from '@/lib/async';
-import { estimateTokens } from '@/lib/extract/budget';
+import { promptBudget, promptTokens } from '@/lib/extract/budget';
 /**
  * NDJSON 스트리밍 파서. 계획서 §5 Phase 2-1
  *
@@ -186,14 +186,18 @@ async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHand
   return perf;
 }
 
-/** Conservative estimate, not a tokenizer guarantee. Reject oversized requests before HTTP. */
+/**
+ * 추정이지 tokenizer 보장이 아니다. 지나치게 큰 요청은 HTTP 전에 막는다.
+ *
+ * ★ 계산은 반드시 budget.ts를 쓴다. 자체 공식을 갖고 있던 동안, 컨텍스트를
+ *   조립하는 context.ts가 다른 공식으로 예산을 맞춰 놓으면 여기서 되돌려
+ *   보냈다 — 기본 설정의 본문+캡처 조합이 항상 거부되던 원인이다.
+ *   조립기가 예산 안에 넣은 요청은 여기를 통과해야 한다.
+ */
 export function assertRequestBudget(req: ChatRequest): void {
   const limit = req.options?.num_ctx;
   if (!limit) return;
-  const tokens = req.messages.reduce((sum, m) => sum + estimateTokens(m.content) + (m.images?.length ?? 0) * 1024 +
-    (m.tool_calls ? estimateTokens(JSON.stringify(m.tool_calls)) : 0) + 8, 0) +
-    (req.tools ? estimateTokens(JSON.stringify(req.tools)) : 0);
-  if (tokens > Math.floor(limit * 0.7)) {
+  if (promptTokens(req.messages, req.tools) > promptBudget(limit)) {
     throw new OllamaError('UNKNOWN', '질문·본문·도구 결과가 입력 예산을 초과했습니다.', '본문을 분리하거나 질문을 나누고, 필요한 경우 컨텍스트 크기를 늘려주세요.');
   }
 }

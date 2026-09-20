@@ -18,6 +18,21 @@
 
 import type { ChatMessage } from '@/types/ollama';
 import { PAGE_ACK, buildSystemPrompt, wrapPageContent } from '@/lib/prompts/system';
+import {
+  estimateTokens,
+  fitToBudget,
+  messageTokens,
+  promptBudget,
+  promptTokens,
+} from '@/lib/extract/budget';
+
+/**
+ * ★ 토큰 비용은 budget.ts 한곳에서만 계산한다.
+ *   이 파일이 자체 공식을 갖고 있던 동안, stream.ts의 전송 게이트가 다른
+ *   공식으로 다시 재서 조립 결과를 거부했다. 두 쪽이 같은 자를 쓰는 것이
+ *   이 모듈의 불변식이다 — budget.ts의 "공용 자" 머리말을 함께 볼 것.
+ */
+export { IMAGE_TOKEN_COST, PROMPT_BUDGET_RATIO } from '@/lib/extract/budget';
 
 export interface ContextInput {
   role: 'user' | 'assistant' | 'system';
@@ -36,19 +51,14 @@ export interface AttachedPage {
 }
 
 /**
- * 화면 캡처. base64(프리픽스 제외).
+ * 대화에 고정되는 첨부물. 페이지 본문과 화면 캡처를 함께 담을 수 있다.
  *
- * ★ 실측(2026-08-19): 이미지 1장이 프롬프트에 더하는 비용은 해상도와 거의
- *   무관하게 약 260토큰이다(1180x800 +262, 1536x864 +266). Gemma가 고정
- *   타일 예산으로 정규화하기 때문이다. 프리필로는 약 4.5초.
- *
+ * ★ 실측(2026-08-19): 이미지 1장의 프롬프트 비용은 해상도와 거의 무관하게
+ *   약 260토큰이다(budget.ts의 IMAGE_TOKEN_COST). 프리필로는 약 4.5초.
  *   즉 **스크린샷은 페이지 본문(2,000토큰)보다 8배 싸다.** 본문 추출이
  *   실패하는 페이지(캔버스 앱, 대시보드, 차트)에서는 오히려 화면을 보내는
  *   편이 빠르고 정확하다.
  */
-export const IMAGE_TOKEN_COST = 262;
-
-/** 대화에 고정되는 첨부물. 페이지 본문과 화면 캡처를 함께 담을 수 있다. */
 export interface Attachment {
   page?: AttachedPage | null;
   /** base64 PNG (data: 프리픽스 제외) */
@@ -56,17 +66,20 @@ export interface Attachment {
 }
 
 /**
- * 프롬프트가 num_ctx를 다 먹으면 답할 자리가 없다.
- * 생성 여유를 남기기 위해 컨텍스트의 70%만 프롬프트에 쓴다.
+ * 고정 블록이 예산을 다 먹지 않도록 대화 몫으로 남겨 두는 최소치.
+ *
+ * ★ 이 값이 없으면 본문 예산을 컨텍스트보다 크게 잡은 설정에서(설정 UI가
+ *   허용한다) 고정 블록만으로 한도를 넘어 전송이 통째로 거부된다. 사용자는
+ *   질문을 지워도 빠져나올 수 없다 — 넘치는 것은 본문이기 때문이다.
+ *
+ * ★ 상수여야 한다. 대화 길이에 따라 움직이면 턴마다 본문 절단 위치가 달라져
+ *   KV 캐시 접두사가 깨진다(실측 183ms → 7,684ms). fitAttachment가 대화를
+ *   쳐다보지 않는 이유도 같다.
  */
-export const PROMPT_BUDGET_RATIO = 0.7;
+export const CONTEXT_RESERVE_TOKENS = 256;
 
-/** 대략적인 토큰 환산. 한/영 혼재를 감안한 보수적 값. */
-function costOf(m: { content: string; images?: string[] }): number {
-  const text = Math.ceil(m.content.length / 2.5);
-  const images = (m.images?.length ?? 0) * IMAGE_TOKEN_COST;
-  return text + images;
-}
+/** 아무리 좁아도 본문을 이보다 더 잘라내지는 않는다. */
+const MIN_PAGE_TOKENS = 64;
 
 /**
  * 오래된 턴부터 버려 예산 안에 맞춘다.
@@ -74,25 +87,28 @@ function costOf(m: { content: string; images?: string[] }): number {
  * @param pinnedCount 앞에서부터 절대 버리지 않을 메시지 수.
  *   시스템 프롬프트(1) + 페이지가 붙었으면 본문·확인 응답(2) = 최대 3.
  *   이걸 버리면 인젝션 가드가 사라지고, 페이지 KV 캐시도 무효화된다.
+ * @param reservedTokens 이 요청에서 메시지 밖으로 나가는 비용(에이전트의 도구
+ *   스키마 등). 전송 게이트는 이것까지 합산하므로 여기서도 빼 두어야 한다.
  */
 export function trimToContext(
   messages: ChatMessage[],
   numCtx: number,
   pinnedCount = 1,
+  reservedTokens = 0,
 ): ChatMessage[] {
   if (messages.length === 0) return [];
 
-  const budget = Math.floor(numCtx * PROMPT_BUDGET_RATIO);
+  const budget = promptBudget(numCtx) - reservedTokens;
   const pinned = messages.slice(0, pinnedCount);
   const rest = messages.slice(pinnedCount);
 
-  let total = pinned.reduce((s, m) => s + costOf(m), 0);
+  let total = pinned.reduce((s, m) => s + messageTokens(m), 0);
   const kept: ChatMessage[] = [];
 
   // 최신 것부터 담는다. 오래된 턴이 먼저 밀려난다.
   for (let i = rest.length - 1; i >= 0; i--) {
     const m = rest[i]!;
-    const c = costOf(m);
+    const c = messageTokens(m);
     if (total + c > budget && kept.length > 0) break;
     total += c;
     kept.unshift(m);
@@ -126,32 +142,18 @@ export function buildContext(
    *   실측 근거는 prompts/agent.ts 머리말.
    */
   systemPrompt: string = buildSystemPrompt(),
+  /**
+   * 메시지 밖으로 나가는 비용. 에이전트의 도구 스키마가 여기에 해당한다.
+   * 전송 게이트가 합산하는 값이므로 조립할 때도 같이 빼야 한다.
+   */
+  reservedTokens = 0,
 ): ChatMessage[] {
-  const att = normalizeAttachment(attachment);
-  const ctx: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
-
-  // 페이지 본문과 화면 캡처를 **하나의 고정 블록**에 담는다.
-  // 나눠 놓으면 하나만 바뀌어도 뒤쪽 접두사가 통째로 밀려 캐시가 죽는다.
-  if (att.page || att.screenshot) {
-    /**
-     * ★ 캡처가 붙었으면 그 사실을 **텍스트로도** 적는다.
-     *   images만 싣고 content는 본문 래퍼만 주면, 모델이 텍스트 프레이밍만 보고
-     *   "페이지 내용에는 이미지가 없다, 텍스트만 존재한다"고 답한다.
-     *   실측(gemma4:e2b): 본문+캡처를 함께 붙였을 때 이미지 토큰 256개가 분명히
-     *   프리필됐는데도 모델이 이미지의 존재 자체를 부정했다. 안내 한 줄을 붙이자
-     *   같은 이미지를 인정했다. 캡처만 붙었을 때 멀쩡했던 건 그때는 이 안내가
-     *   유일한 content였기 때문이다.
-     */
-    const parts: string[] = [];
-    if (att.page) parts.push(wrapPageContent(att.page));
-    if (att.screenshot) parts.push(SCREEN_NOTE);
-
-    const msg: ChatMessage = { role: 'user', content: parts.join('\n\n') };
-    if (att.screenshot) msg.images = [att.screenshot];
-    ctx.push(msg);
-    ctx.push({ role: 'assistant', content: ackFor(att) });
-  }
-  const pinnedCount = att.page || att.screenshot ? 3 : 1;
+  const att = fitAttachment(normalizeAttachment(attachment), numCtx, {
+    systemPrompt,
+    reservedTokens,
+  });
+  const ctx = pinnedMessages(att, systemPrompt);
+  const pinnedCount = ctx.length;
 
   for (const m of messages) {
     if (m.streaming) continue;
@@ -160,7 +162,105 @@ export function buildContext(
     ctx.push({ role: m.role, content: m.content });
   }
 
-  return trimToContext(ctx, numCtx, pinnedCount);
+  return trimToContext(ctx, numCtx, pinnedCount, reservedTokens);
+}
+
+/**
+ * 대화 내내 바이트 단위로 고정되는 앞부분.
+ *
+ * ★ 페이지 본문과 화면 캡처를 **하나의 블록**에 담는다. 나눠 놓으면 하나만
+ *   바뀌어도 뒤쪽 접두사가 통째로 밀려 캐시가 죽는다.
+ */
+function pinnedMessages(att: Attachment, systemPrompt: string): ChatMessage[] {
+  const ctx: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
+  if (!att.page && !att.screenshot) return ctx;
+
+  /**
+   * ★ 캡처가 붙었으면 그 사실을 **텍스트로도** 적는다.
+   *   images만 싣고 content는 본문 래퍼만 주면, 모델이 텍스트 프레이밍만 보고
+   *   "페이지 내용에는 이미지가 없다, 텍스트만 존재한다"고 답한다.
+   *   실측(gemma4:e2b): 본문+캡처를 함께 붙였을 때 이미지 토큰 256개가 분명히
+   *   프리필됐는데도 모델이 이미지의 존재 자체를 부정했다. 안내 한 줄을 붙이자
+   *   같은 이미지를 인정했다. 캡처만 붙었을 때 멀쩡했던 건 그때는 이 안내가
+   *   유일한 content였기 때문이다.
+   */
+  const parts: string[] = [];
+  if (att.page) parts.push(wrapPageContent(att.page));
+  if (att.screenshot) parts.push(SCREEN_NOTE);
+
+  const msg: ChatMessage = { role: 'user', content: parts.join('\n\n') };
+  if (att.screenshot) msg.images = [att.screenshot];
+  ctx.push(msg);
+  ctx.push({ role: 'assistant', content: ackFor(att) });
+  return ctx;
+}
+
+/**
+ * 고정 블록이 예산에 들어가도록 본문을 줄인다. 들어가면 **그대로 돌려준다.**
+ *
+ * ★ 예전에는 이 단계가 없어서, 고정 블록이 한도를 넘으면 전송 게이트가
+ *   요청을 통째로 거부했다. 본문 예산(최대 8,000)을 컨텍스트(최소 2,048)보다
+ *   크게 잡을 수 있는 설정 UI에서는 사용자가 빠져나갈 방법이 없었다.
+ *
+ * ★ 대화 이력을 인자로 받지 않는 것이 핵심이다. 턴마다 절단 위치가 달라지면
+ *   KV 캐시 접두사가 매번 깨진다. 같은 첨부·같은 설정이면 언제 불러도 같은
+ *   결과여야 한다(순수 함수).
+ *
+ * ★ 멱등이다. 이미 맞춰진 첨부를 다시 넣어도 그대로 나온다 — 그래서 호출자가
+ *   절단 고지를 만들려고 미리 한 번 불러도 buildContext의 결과와 어긋나지 않는다.
+ */
+export function fitAttachment(
+  att: Attachment,
+  numCtx: number,
+  opts: { systemPrompt?: string; reservedTokens?: number } = {},
+): Attachment {
+  const page = att.page;
+  if (!page) return att;
+
+  const systemPrompt = opts.systemPrompt ?? buildSystemPrompt();
+  const room =
+    promptBudget(numCtx) - (opts.reservedTokens ?? 0) - CONTEXT_RESERVE_TOKENS;
+
+  /**
+   * 잘라낸 본문이 실제로 어떤 모습으로 나갈지 — 재는 것과 내보내는 것이
+   * **같은 객체**여야 한다.
+   *
+   * ★ 처음에는 잘린 text만 끼워 재고 truncated는 나중에 켰다. 그러자
+   *   wrapPageContent가 붙이는 "참고: 앞부분 N%만 담고 있다" 한 줄이 측정에
+   *   빠져, 맞췄다고 판단한 블록이 실제로는 그만큼 더 컸다. 같은 종류의
+   *   어긋남(재는 자와 쓰는 자가 다른 것)이 애초에 이 버그의 원인이었다.
+   */
+  const candidate = (text: string): AttachedPage =>
+    text === page.text
+      ? page
+      : {
+          ...page,
+          text,
+          truncated: true,
+          // 추출 단계에서 이미 잘렸을 수 있다. 원문 대비 비율로 합쳐 고지한다.
+          keptRatio: (page.keptRatio ?? 1) * (text.length / page.text.length),
+        };
+
+  const costWith = (text: string) =>
+    promptTokens(pinnedMessages({ ...att, page: candidate(text) }, systemPrompt));
+
+  if (costWith(page.text) <= room) return att;
+
+  // 래퍼·안내문의 토큰 비용은 글자 수에 선형이 아니다 — 한글 비율에 따라
+  // 자·토큰 비가 달라지므로 한 번에 정확히 맞출 수 없다. 넘친 만큼 빼며
+  // 몇 번 수렴시킨다. 더 줄지 않으면 멈춘다(무한 루프 방지).
+  let text = page.text;
+  for (let i = 0; i < 5; i++) {
+    const over = costWith(text) - room;
+    if (over <= 0) break;
+    const target = Math.max(MIN_PAGE_TOKENS, estimateTokens(text) - over);
+    const next = fitToBudget(text, target).text;
+    if (next.length >= text.length) break;
+    text = next;
+  }
+
+  if (text === page.text) return att;
+  return { ...att, page: candidate(text) };
 }
 
 /** 화면 캡처가 붙었을 때의 안내. 이 문자열도 상수여야 접두사가 안정된다. */
@@ -196,7 +296,7 @@ export function estimatePrefillSeconds(
   messages: ChatMessage[],
   prefillTokPerSec = 131,
 ): number {
-  const tokens = messages.reduce((sum, m) => sum + costOf(m), 0);
+  const tokens = messages.reduce((sum, m) => sum + messageTokens(m), 0);
   return Math.round((tokens / prefillTokPerSec) * 10) / 10;
 }
 
@@ -225,9 +325,9 @@ export function uncachedPrefillSeconds(
       ) {
         break;
       }
-      shared += costOf(b);
+      shared += messageTokens(b);
     }
   }
-  const total = next.reduce((s, m) => s + costOf(m), 0);
+  const total = next.reduce((s, m) => s + messageTokens(m), 0);
   return Math.round((Math.max(0, total - shared) / prefillTokPerSec) * 10) / 10;
 }

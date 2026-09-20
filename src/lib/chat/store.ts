@@ -28,10 +28,12 @@ import {
 } from '@/lib/storage/db';
 import {
   buildContext,
+  fitAttachment,
   uncachedPrefillSeconds,
   type AttachedPage,
   type Attachment,
 } from '@/lib/chat/context';
+import { estimateTokens } from '@/lib/extract/budget';
 import { sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
@@ -39,6 +41,12 @@ import { AGENT_TOOLS } from '@/lib/agent/tools';
 import { createBrowserTools } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
 import { buildAgentSystem } from '@/lib/prompts/agent';
+
+/**
+ * 도구 스키마가 매 턴 차지하는 프롬프트 비용. 상수라 한 번만 잰다.
+ * 컨텍스트 조립과 전송 게이트가 같은 값을 보게 하기 위한 것이다.
+ */
+const AGENT_TOOLS_TOKENS = estimateTokens(JSON.stringify(AGENT_TOOLS));
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
 export interface AgentTab {
@@ -418,11 +426,12 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
 
   const { page, screenshot, stale } = freshAttachment(set, get);
 
-  const context = buildContext(
-    get().messages,
-    settings.numCtx,
-    toAttachment(page, screenshot),
-  );
+  // ★ 먼저 예산에 맞춘 첨부를 만든다. buildContext도 같은 함수를 부르지만
+  //   멱등이라 결과가 같다 — 여기서 미리 부르는 이유는 절단 고지에 실제로
+  //   모델이 본 비율을 적기 위해서다.
+  const attachment = fitAttachment(toAttachment(page, screenshot), settings.numCtx);
+
+  const context = buildContext(get().messages, settings.numCtx, attachment);
   // 캐시 적중분을 뺀 예상 대기시간. 페이지를 붙인 후속 질문은 이 값이 거의 0이다.
   const expectedPrefillSec = uncachedPrefillSeconds(get().lastContext, context);
 
@@ -473,9 +482,11 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   // 조용히 넘어가지 않는다 — 페이지 없이 답한 사실을 반드시 알린다.
   const staleNotice = stale ? STALE_NOTICE : undefined;
 
+  // 추출 단계의 절단과 컨텍스트에 맞추느라 생긴 절단을 합친 비율이다.
+  const fitted = attachment.page;
   const truncNotice =
-    page?.truncated && !get().lastContext
-      ? `본문이 길어 앞부분 ${Math.round(page.keptRatio * 100)}%만 참조했습니다.`
+    fitted?.truncated && !get().lastContext
+      ? `본문이 길어 앞부분 ${Math.round((fitted.keptRatio ?? 1) * 100)}%만 참조했습니다.`
       : undefined;
 
   const notice = staleNotice ?? truncNotice;
@@ -599,11 +610,18 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   // ★ 시스템 프롬프트 · 에이전트 지침 · 현재 탭 안내를 **하나로 합쳐** 넣는다.
   //   나눠 넣으면 도구 호출이 깨지고, 탭을 알려주지 않으면 "어떤 페이지요?"라고
   //   되묻고 끝난다. 둘 다 실측 근거는 prompts/agent.ts 머리말.
+  // ★ 도구 스키마 8종은 매 턴 프리필에 들어가고 전송 게이트도 합산한다.
+  //   조립할 때 빼두지 않으면 게이트가 첫 턴부터 요청을 되돌려 보낸다.
+  const agentSystem = buildAgentSystem(tab);
   const context = buildContext(
     get().messages,
     settings.numCtx,
-    toAttachment(page, screenshot),
-    buildAgentSystem(tab),
+    fitAttachment(toAttachment(page, screenshot), settings.numCtx, {
+      systemPrompt: agentSystem,
+      reservedTokens: AGENT_TOOLS_TOKENS,
+    }),
+    agentSystem,
+    AGENT_TOOLS_TOKENS,
   );
 
   const placeholder: UiMessage = {
