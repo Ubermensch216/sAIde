@@ -1,4 +1,5 @@
 import { abortable, deadlineSignal } from '@/lib/async';
+import type { PdfSource } from '@/lib/extract/pdf-text';
 
 /**
  * 계약 ② — Side Panel ↔ Service Worker ↔ Content Script 3자 통신 규약.
@@ -221,7 +222,13 @@ export type SWToContent = (
 
 export type ContentToSW =
   | { type: 'PREPARED'; token: string; label?: string }
-  | { type: 'EXTRACTED'; payload: ExtractedPage }
+  /**
+   * pdf: 이 프레임이 PDF 뷰어로 보여 준 본문의 원본.
+   *
+   * ★ 서비스 워커가 글자로 바꿔 payload에 합치고 패널에는 넘기지 않는다. 원본 바이트를
+   *   패널까지 들고 가면 메시지 한 건이 수 MB가 된다.
+   */
+  | { type: 'EXTRACTED'; payload: ExtractedPage; pdf?: PdfSource[] }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 

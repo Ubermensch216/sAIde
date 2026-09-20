@@ -17,6 +17,7 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
 
 import { Readability } from '@mozilla/readability';
 import { fitToBudget } from '@/lib/extract/budget';
+import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import {
   extractYouTubeCaption,
   isYouTubeWatch,
@@ -34,7 +35,7 @@ import type {
 /** 재주입 가드용 전역 플래그. */
 declare global {
   interface Window {
-    __saideInjected?: true;
+    __saideInjected?: () => boolean;
   }
 }
 
@@ -44,8 +45,13 @@ const cancelled = new Map<string, number>();
 export default defineUnlistedScript(() => {
   // background는 요청마다 executeScript를 호출한다(이미 주입됐는지 알 수 없으므로).
   // 가드가 없으면 리스너가 중첩되어 같은 요청에 여러 번 응답하게 된다.
-  if (window.__saideInjected) return;
-  window.__saideInjected = true;
+  // ★ 단순 true 플래그면 확장을 다시 불러왔을 때 열려 있던 페이지에 이전 인스턴스의 값이
+  //   남아, 새 스크립트가 리스너를 등록하지 못한다. 페이지를 새로 고칠 때까지 모든 읽기가
+  //   실패하고, 사용자에게는 확장이 고장 난 것으로 보인다.
+  //   이전 인스턴스의 런타임이 **아직 살아 있을 때만** 재주입을 건너뛴다.
+  if (window.__saideInjected?.()) return;
+  const runtime = chrome.runtime;
+  window.__saideInjected = () => { try { return Boolean(runtime?.id); } catch { return false; } };
 
   chrome.runtime.onMessage.addListener((msg: SWToContent, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || !msg || !validControl(msg.control)) return false;
@@ -63,10 +69,13 @@ export default defineUnlistedScript(() => {
         if (msg.type === 'PREPARE' && validAction(msg.action)) {
           sendResponse({ type: 'PREPARED', ...approvals.prepare(msg.action, msg.control) } satisfies ContentToSW);
         } else if (msg.type === 'EXTRACT') {
-          sendResponse({
-            type: 'EXTRACTED',
-            payload: await extractPage(msg.budgetTokens),
-          } satisfies ContentToSW);
+          const payload = await extractPage(msg.budgetTokens);
+          // 본문이 PDF 뷰어로 떠 있으면 DOM에는 글자가 없다.
+          // ★ 원본은 서비스 워커가 아니라 이 프레임에서 받는다. 페이지와 같은 출처로 요청해야
+          //   로그인 쿠키가 실려 권한이 필요한 PDF도 받을 수 있다.
+          const pdfUrls = findPdfUrls();
+          const pdf = pdfUrls.length ? await readPdfSources(pdfUrls) : [];
+          sendResponse({ type: 'EXTRACTED', payload, ...(pdf.length ? { pdf } : {}) } satisfies ContentToSW);
         } else if (msg.type === 'ACT' && validAction(msg.action)) {
           sendResponse({
             type: 'ACTED',

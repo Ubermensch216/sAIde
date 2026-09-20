@@ -1,5 +1,12 @@
+import { readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
+
+// 글꼴을 넣지 않은 한글 PDF를 읽는 데 필요한 CMap만 배포한다(전체는 170개가 넘는다).
+// lib/extract/pdf-text.ts 참조.
+const CMAP_DIR = resolve('node_modules/pdfjs-dist/cmaps');
+const KOREAN_CMAP = /^(Adobe-Korea1-|KSC|UniKS-)/;
 
 // 계획서 §5 Phase 1-3. manifest 전체는 여기서 단일 관리한다.
 export default defineConfig({
@@ -9,6 +16,14 @@ export default defineConfig({
   vite: () => ({
     plugins: [tailwindcss()],
   }),
+
+  hooks: {
+    'build:publicAssets': (_wxt, files) => {
+      for (const name of readdirSync(CMAP_DIR).filter(file => KOREAN_CMAP.test(file))) {
+        files.push({ absoluteSrc: resolve(CMAP_DIR, name), relativeDest: `cmaps/${name}` });
+      }
+    },
+  },
 
   manifest: {
     minimum_chrome_version: '116',
@@ -39,6 +54,8 @@ export default defineConfig({
       'tabs',
       // 새 창 팝업의 부모 탭은 이 이벤트로만 알 수 있다(lib/browser/panel-sync.ts).
       'webNavigation',
+      // 본문이 PDF 뷰어로 표시될 때 pdf.js로 글자를 뽑는 숨은 문서를 만든다.
+      'offscreen',
       /**
        * 일정 탭의 기한 알림. 둘은 한 쌍이다.
        *

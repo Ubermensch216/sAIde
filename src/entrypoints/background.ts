@@ -23,6 +23,7 @@ import {
 } from '@/lib/messaging/protocol';
 
 import { registerTaskAlerts } from '@/lib/schedule/alerts';
+import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
 import {
   forgetPanelSpawn,
   isReportedPanelTab,
@@ -200,7 +201,12 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
         budgetTokens: msg.budgetTokens,
         control,
       });
-      if (res.type === 'EXTRACTED') return { type: 'PAGE_EXTRACTED', payload: res.payload };
+      if (res.type === 'EXTRACTED') {
+        if (!res.pdf?.length) return { type: 'PAGE_EXTRACTED', payload: res.payload };
+        // 화면 글자 뒤가 아니라 앞에 붙인다. 이미 예산에 맞춰 잘린 뒤에 붙이면 본문이 잘려 나간다.
+        const texts = await Promise.all(res.pdf.map(pdfText));
+        return { type: 'PAGE_EXTRACTED', payload: withPdfSections(res.payload, texts, msg.budgetTokens) };
+      }
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
     }
