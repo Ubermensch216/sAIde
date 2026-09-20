@@ -204,7 +204,17 @@ describe('청소', () => {
     q.stop();
   });
 
-  it('기억이 꺼져 있으면 청소도 하지 않는다 — 끄는 것은 삭제가 아니다', async () => {
+  /**
+   * ★ 이 테스트는 예전에 정반대를 주장했다("기억이 꺼져 있으면 청소도 하지
+   *   않는다"). "끄는 것은 삭제가 아니다"라는 원칙 자체는 옳지만, 그 원칙을
+   *   **보관 기간에까지** 적용한 것이 문제였다. prune으로 가는 경로가
+   *   sweep 하나뿐이라 기억을 끄는 순간 기한이 영구히 멈췄고, 30일로 쓰다
+   *   기능을 끈 사용자의 기록이 디스크에 그대로 남았다.
+   *
+   *   원칙은 아래 두 테스트로 나눠 지킨다 — 기한이 지난 것은 지우고,
+   *   기한 안의 것은 기억을 꺼도 건드리지 않는다.
+   */
+  it('★ 기억이 꺼져 있어도 보관 기간은 지킨다 — 기한은 삭제 약속이다', async () => {
     await savePage({
       url: 'https://old.com/1',
       title: '옛',
@@ -214,6 +224,36 @@ describe('청소', () => {
       visitedAt: 0,
     });
     const { q } = harness({ memoryEnabled: false, memoryRetentionDays: 1 });
+    expect(await q.sweep()).toBe(1);
+    expect((await stats()).pages).toBe(0);
+    q.stop();
+  });
+
+  it('기억을 꺼도 기한 안의 기록은 지우지 않는다 — 끄는 것은 삭제가 아니다', async () => {
+    await savePage({
+      url: 'https://recent.com/1',
+      title: '최근',
+      chunks: ['최근 것'],
+      vectors: [[1, 0, 0]],
+      model: 'bge-m3',
+      visitedAt: Date.now(),
+    });
+    const { q } = harness({ memoryEnabled: false, memoryRetentionDays: 30 });
+    expect(await q.sweep()).toBe(0);
+    expect((await stats()).pages).toBe(1);
+    q.stop();
+  });
+
+  it('보관 기간이 무기한이면 기억을 꺼도 아무것도 지우지 않는다', async () => {
+    await savePage({
+      url: 'https://old.com/1',
+      title: '옛',
+      chunks: ['옛것'],
+      vectors: [[1, 0, 0]],
+      model: 'bge-m3',
+      visitedAt: 0,
+    });
+    const { q } = harness({ memoryEnabled: false, memoryRetentionDays: 0 });
     expect(await q.sweep()).toBe(0);
     expect((await stats()).pages).toBe(1);
     q.stop();

@@ -14,6 +14,7 @@ import { useRichT, useT } from '@/lib/i18n';
 import {
   clearAll,
   forgetDomain,
+  prune,
   stats,
   type MemoryStats,
 } from '@/lib/memory/store';
@@ -37,11 +38,30 @@ export function MemoryPanel() {
     try { setInfo(await stats()); } catch (error) { setError(String(error)); }
   }, []);
 
+  /**
+   * 보관 기간이 지난 기록을 지우고 현황을 다시 읽는다.
+   *
+   * ★ 이 화면은 "저장됨 N개"와 "가장 오래된 기록"을 보여준다. 만료분을
+   *   남겨 둔 채 세면 사용자가 이미 지워졌다고 믿는 기록이 숫자에 섞인다.
+   *   검색은 만료분을 걸러내지만, **걸러내는 것과 지우는 것은 다르다.**
+   *
+   * ★ 기간을 줄였을 때 그 자리에서 적용되어야 한다. 예전에는 사이드패널을
+   *   다시 열어야 실제 삭제가 일어났고, 기억을 꺼 두었다면 영영 일어나지
+   *   않았다(queue.ts의 sweep 주석 참조).
+   */
+  const sweepAndRefresh = useCallback(async (retentionDays: number) => {
+    try {
+      await prune(retentionDays);
+      setInfo(await stats());
+    } catch (error) { setError(String(error)); }
+  }, []);
+
   useEffect(() => {
-    void loadSettings().then(setS).catch(error => setError(String(error)));
-    void refresh();
+    void loadSettings()
+      .then((settings) => { setS(settings); return sweepAndRefresh(settings.memoryRetentionDays); })
+      .catch(error => setError(String(error)));
     return onSettingsChanged(settings => { setS(settings); void refresh(); });
-  }, [refresh]);
+  }, [refresh, sweepAndRefresh]);
 
   if (!s) return null;
 
@@ -107,7 +127,12 @@ export function MemoryPanel() {
           <select
             id="retention"
             value={s.memoryRetentionDays}
-            onChange={(e) => { const days = Number(e.target.value); void run(() => patch({ memoryRetentionDays: days })); }}
+            onChange={(e) => {
+              const days = Number(e.target.value);
+              // 기간을 줄였으면 그 자리에서 실제로 지운다. 설정만 바뀌고
+              // 디스크는 그대로면 "30일 보관"은 약속이 아니라 표시일 뿐이다.
+              void run(async () => { await patch({ memoryRetentionDays: days }); await sweepAndRefresh(days); });
+            }}
           >
             {RETENTION_CHOICES.map((d) => (
               <option key={d} value={d}>

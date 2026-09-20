@@ -48,7 +48,7 @@ LLM 호출은 서비스 워커가 아닌 패널 문서에서 수행한다. 따�
 | `chrome.storage.local` | `saide.settings`, 사용자 프리셋 | 명시 변경 또는 확장 데이터 제거 |
 | IndexedDB `saide`, version 2 | conversations, messages | 사용자 삭제까지, 자동 대화 만료 없음. v1 테이블 보존 |
 | 같은 DB memoryControl | policy epoch·enabled·excluded | 삭제/제외/끄기와 늦은 저장을 직렬화 |
-| 같은 DB pageVectors | URL·제목·본문 청크·Float32Array·모델·시각 | 설정 보관 기간/삭제, 정리는 패널 시작 시 |
+| 같은 DB pageVectors | URL·제목·본문 청크·Float32Array·모델·시각 | 설정 보관 기간/삭제. 정리는 패널 시작·기억 설정 화면 열기·보관 기간 변경 시이며 기억 활성화 여부와 무관 |
 | 패널 메모리 | 첨부 본문·화면, 요청 상태, 임베딩 대기 | 패널 종료/대화 전환 등 |
 
 대화는 첫 전송 시 생성한다. 탭 ID와 fragment를 제외한 문서 URL로 기존 대화를 찾는다. 최근 대화 목록은 50건, 성능 집계는 최근 최대 500개 메시지에서 표본을 가져온다. 이 제한은 전체 저장 개수 제한이 아니다.

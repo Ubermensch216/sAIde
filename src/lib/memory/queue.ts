@@ -128,11 +128,25 @@ export function createEmbedQueue(deps: QueueDeps) {
       return true;
     },
 
-    /** 보관 기간 청소. 패널이 열릴 때 한 번 부른다. */
+    /**
+     * 보관 기간 청소. 패널이 열릴 때 한 번 부른다.
+     *
+     * ★ memoryEnabled를 보지 않는다. 두 설정은 뜻이 다르다.
+     *
+     *     기억 끄기   = "앞으로 모으지 마라" (수집 설정)
+     *     보관 기간   = "이만큼만 갖고 있겠다" (삭제 약속)
+     *
+     *   예전에는 여기서 memoryEnabled를 먼저 보고 빠져나갔다. prune으로 가는
+     *   경로가 이 함수뿐이라, **기억을 끄는 순간 보관 기간이 영구히 멈췄다.**
+     *   30일로 써 오다 기억을 끈 사용자의 기록은 기한이 지나도 디스크에 남는다.
+     *   검색은 만료분을 걸러내므로 화면에는 보이지 않고, 그래서 더 나쁘다 —
+     *   사용자는 지워진 줄 안다.
+     *
+     *   끄는 것이 삭제가 아니라는 원칙은 그대로다. 기억을 꺼도 기한 안의
+     *   기록은 손대지 않는다. 지우는 것은 사용자가 정한 기한이 지난 것뿐이다.
+     */
     async sweep(): Promise<number> {
-      const s = deps.getSettings();
-      if (!s.memoryEnabled) return 0;
-      return prune(s.memoryRetentionDays);
+      return prune(deps.getSettings().memoryRetentionDays);
     },
 
     /** 테스트와 종료용. */

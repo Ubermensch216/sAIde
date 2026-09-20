@@ -215,6 +215,8 @@ export default function App() {
     });
     queueRef.current = q;
     // 보관 기간이 지난 기억은 여기서 정리한다(6-3).
+    // ★ 기억이 꺼져 있어도 돈다 — 보관 기간은 수집 설정이 아니라 삭제
+    //   약속이다. 근거는 queue.ts의 sweep 주석.
     void q.sweep();
     return () => {
       q.stop();
