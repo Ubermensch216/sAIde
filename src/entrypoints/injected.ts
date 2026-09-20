@@ -18,6 +18,7 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
 import { Readability } from '@mozilla/readability';
 import { fitToBudget } from '@/lib/extract/budget';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
+import { collectDocumentText } from '@/lib/extract/document-text';
 import {
   extractYouTubeCaption,
   isYouTubeWatch,
@@ -121,8 +122,12 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
   }
 
   // ③ 폴백 — 리더 모드가 실패하는 페이지(SPA, 대시보드 등)가 흔하다.
+  //
+  // ★ body.innerText만 보지 않는다. 본문을 같은 출처 iframe에 담거나 읽기 전용
+  //   편집기(textarea)에 넣어 두는 화면이 있는데, 둘 다 innerText에 나타나지 않는다.
+  //   리더 모드가 이미 실패한 자리라 여기서도 비면 사용자는 "읽을 내용이 없다"만 본다.
   if (raw.length < 200) {
-    raw = document.body?.innerText?.trim() ?? '';
+    raw = collectDocumentText();
     method = 'innerText';
   }
 
