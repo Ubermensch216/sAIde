@@ -164,6 +164,15 @@ export function presentError(e: AppError, model = ''): ErrorPresentation {
         body: t('err.scheduleInput.body'),
       };
 
+    case 'SELECTION_EMPTY':
+      // 실패가 아니라 순서가 덜 끝난 것이다. 무엇을 먼저 하면 되는지만 알린다.
+      return {
+        ...base,
+        severity: 'info',
+        title: t('err.selectionEmpty.title'),
+        body: t('err.selectionEmpty.body'),
+      };
+
     case 'UNKNOWN':
       return {
         ...base,

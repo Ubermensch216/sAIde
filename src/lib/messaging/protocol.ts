@@ -43,6 +43,8 @@ export type ErrorCode =
   | 'MEMORY_QUERY_REQUIRED'
   /** `@일정`을 할 말 없이 쳤다. 마찬가지로 입력이 덜 끝난 것이다. */
   | 'SCHEDULE_INPUT_REQUIRED'
+  /** 선택 영역을 붙이려는데 페이지에 선택된 글자가 없다. 실패가 아니라 순서가 덜 끝난 것이다. */
+  | 'SELECTION_EMPTY'
   | 'UNKNOWN';
 
 export interface AppError {
@@ -56,7 +58,13 @@ export interface AppError {
 
 /* ── 페이지 추출 결과 ──────────────────────────────────── */
 
-export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption' | 'pdf';
+export type ExtractMethod =
+  | 'readability'
+  | 'innerText'
+  | 'youtube-caption'
+  | 'pdf'
+  /** 사용자가 페이지에서 직접 드래그해 고른 부분. 페이지 본문과 나란히 붙는다. */
+  | 'selection';
 
 export interface ExtractedPage {
   url: string;
@@ -161,6 +169,7 @@ export interface RequestControl {
 
 export type PanelToSW = (
   | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
+  | { type: 'EXTRACT_SELECTION'; tabId: number; budgetTokens: number }
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
   | { type: 'EXEC_ACTION'; tabId: number; action: PageAction }
   | { type: 'LIST_TABS' }
@@ -191,6 +200,8 @@ export interface TabSummary {
 export type SWToPanel =
   | { type: 'ACTION_PREPARED'; token: string; label?: string }
   | { type: 'PAGE_EXTRACTED'; payload: ExtractedPage }
+  /** 선택 영역. 페이지 본문과 같은 모양이라 같은 타입을 쓴다(method가 'selection'). */
+  | { type: 'SELECTION_EXTRACTED'; payload: ExtractedPage }
   | { type: 'SCREENSHOT'; dataUrl: string }
   | { type: 'ACTION_RESULT'; result: ActionResult }
   | { type: 'TABS'; tabs: TabSummary[] }
@@ -213,6 +224,7 @@ export type SWToPanel =
 export type SWToContent = (
   | { type: 'CANCEL' }
   | { type: 'EXTRACT'; budgetTokens: number }
+  | { type: 'EXTRACT_SELECTION'; budgetTokens: number }
   | { type: 'ACT'; action: PageAction }
   | { type: 'PREPARE'; action: PageAction }
 ) & { control: RequestControl };
@@ -226,6 +238,7 @@ export type ContentToSW =
    *   패널까지 들고 가면 메시지 한 건이 수 MB가 된다.
    */
   | { type: 'EXTRACTED'; payload: ExtractedPage; pdf?: PdfSource[] }
+  | { type: 'SELECTED'; payload: ExtractedPage }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 

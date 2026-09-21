@@ -80,6 +80,9 @@ const ko = {
   'panel.regenerateHint': '마지막 답변을 다시 생성합니다',
   'panel.attachPage': '페이지 붙이기',
   'panel.attachPageHint': '현재 페이지 본문을 대화에 붙입니다 (약 {sec}초)',
+  'panel.attachSelection': '선택 영역 붙이기',
+  'panel.attachSelectionHint':
+    '페이지에서 드래그해 고른 부분만 대화에 붙입니다. 페이지 전체보다 훨씬 빠릅니다.',
   'panel.attachScreen': '화면 붙이기',
   'panel.attachScreenHint': '현재 화면을 캡처해 대화에 붙입니다 (약 5초)',
   'panel.reading': '읽는 중…',
@@ -115,6 +118,7 @@ const ko = {
   /* ── 페이지 첨부 ── */
   'page.method.readability': '본문',
   'page.method.innerText': '화면 텍스트',
+  'page.method.selection': '선택 영역',
   'page.method.youtube': '자막',
   'page.detach': '페이지 떼어내기',
   'page.truncated': '앞부분 {pct}%만 읽음',
@@ -122,6 +126,7 @@ const ko = {
   'page.screenshot': '화면 캡처',
   'page.screenshotAlt': '붙인 화면 캡처',
   'page.screenshotDetach': '화면 캡처 떼어내기',
+  'page.selectionDetach': '선택 영역 떼어내기',
   'page.attached': '이 페이지에 대해 계속 물어볼 수 있습니다. 후속 질문은 빠릅니다.',
   'page.costHint': '본문을 읽는 데 약 {sec}초, 화면 캡처는 약 5초 걸립니다.',
   'page.reading': '페이지를 읽는 중…',
@@ -358,6 +363,9 @@ const ko = {
     '설정에서 기억하기를 켜야 전에 읽은 페이지에서 찾을 수 있습니다. 켜기 전에 읽은 페이지는 기억에 남지 않습니다.',
   'err.memoryQuery.title': '무엇을 찾을지 함께 적어 주세요',
   'err.memoryQuery.body': '명령 뒤에 찾을 내용을 이어서 씁니다. 예: /기억 예산 편성 지침',
+  'err.selectionEmpty.title': '페이지에서 먼저 드래그해 주세요',
+  'err.selectionEmpty.body':
+    '붙일 부분이 선택되어 있지 않습니다. 페이지에서 원하는 곳을 드래그한 뒤 다시 누르세요.',
   'err.scheduleInput.title': '무엇을 할지 함께 적어 주세요',
   'err.scheduleInput.body':
     '예: `@일정 내일까지 예산안 제출` · `@일정 이번 주 일정 보여줘` · `@일정 교육 신청 지워줘`',
@@ -606,6 +614,9 @@ const en = {
   'panel.regenerateHint': 'Generate the last answer again',
   'panel.attachPage': 'Attach page',
   'panel.attachPageHint': "Attach this page's text to the conversation (about {sec}s)",
+  'panel.attachSelection': 'Attach selection',
+  'panel.attachSelectionHint':
+    'Attach only the part you dragged on the page. Much faster than the whole page.',
   'panel.attachScreen': 'Attach screen',
   'panel.attachScreenHint': 'Capture the current screen and attach it (about 5s)',
   'panel.reading': 'Reading…',
@@ -639,6 +650,7 @@ const en = {
 
   'page.method.readability': 'Article',
   'page.method.innerText': 'Screen text',
+  'page.method.selection': 'Selection',
   'page.method.youtube': 'Captions',
   'page.detach': 'Detach page',
   'page.truncated': 'first {pct}% only',
@@ -646,6 +658,7 @@ const en = {
   'page.screenshot': 'Screen capture',
   'page.screenshotAlt': 'Attached screen capture',
   'page.screenshotDetach': 'Detach screen capture',
+  'page.selectionDetach': 'Detach selection',
   'page.attached': 'You can keep asking about this page. Follow-up questions are fast.',
   'page.costHint': 'Reading the text takes about {sec}s; a screen capture about 5s.',
   'page.reading': 'Reading the page…',
@@ -878,6 +891,9 @@ const en = {
     'Turn on memory in settings to search pages you read before. Pages read before you turn it on are not remembered.',
   'err.memoryQuery.title': 'Tell me what to look for',
   'err.memoryQuery.body': 'Write what to search after the command. Example: /recall budget guidelines',
+  'err.selectionEmpty.title': 'Select something on the page first',
+  'err.selectionEmpty.body':
+    'Nothing is selected. Drag over the part you want on the page, then press this again.',
   'err.scheduleInput.title': 'Say what to do as well',
   'err.scheduleInput.body':
     'For example: `@schedule submit the budget by tomorrow` · `@schedule show this week` · `@schedule delete the training sign-up`',

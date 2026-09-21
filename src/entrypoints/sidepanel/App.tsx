@@ -21,6 +21,7 @@ import { listMessages, pruneEmptyConversations, type Conversation } from '@/lib/
 import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import type { SWToPanel, TabSummary } from '@/lib/messaging/protocol';
 import {
+  ASK_SELECTION_ID,
   builtinCommands,
   customCommands,
   expandCommand,
@@ -52,6 +53,7 @@ import { ConversationMenu } from './components/ConversationMenu';
 import { PageContextChip } from './components/PageContextChip';
 import { PageActions } from './components/PageActions';
 import { ScreenshotChip } from './components/ScreenshotChip';
+import { SelectionChip } from './components/SelectionChip';
 import { SchedulePanel } from './components/SchedulePanel';
 import { ScheduleIntentCard } from './components/ScheduleIntentCard';
 import { Onboarding } from './components/Onboarding';
@@ -75,6 +77,12 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState<TabSummary | null>(null);
   const [draft, setDraft] = useState('');
+  /**
+   * 입력창에 포커스를 옮기라는 신호. 값이 바뀔 때마다 한 번씩 옮긴다.
+   *
+   * 우클릭으로 선택 영역을 붙인 직후에 쓴다 — 그때 사용자는 질문을 쓰려는 참이다.
+   */
+  const [composerFocus, setComposerFocus] = useState(0);
   const [customs, setCustoms] = useState<CustomPreset[]>([]);
   /**
    * 에이전트 모드 (Phase 5). 켠 동안에만 툴 스키마가 붙는다.
@@ -216,7 +224,7 @@ export default function App() {
         // 주소는 그대로인데 화면만 바뀌었다. 붙여 둔 본문을 지난 것으로 본다.
         if (msg.tabId === currentTab.current?.tabId) chat.noteScreenChange(msg.frameId);
       } else if (msg.type === 'CONTEXT_MENU') {
-        handleContextMenu(msg.preset, msg.selectionText);
+        handleContextMenu(msg.preset, msg.selectionText, msg.tab.tabId);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -231,16 +239,42 @@ export default function App() {
   /**
    * 컨텍스트 메뉴에서 온 선택 텍스트 처리.
    *
-   * 'send'는 사용자가 무엇을 물을지 정해야 하므로 입력창에 넣기만 한다.
+   * 'ask'는 사용자가 무엇을 물을지 정해야 하므로 고른 부분을 **첨부로** 붙이고 멈춘다.
    * 나머지는 바로 보낸다 — 선택 텍스트는 짧아 프리필이 싸다.
    */
-  const handleContextMenu = (presetId: string, selection: string) => {
+  const handleContextMenu = (presetId: string, selection: string, tabId: number) => {
+    if (presetId === ASK_SELECTION_ID) {
+      void attachSelectionFor(tabId, selection);
+      return;
+    }
+
     const preset = findPreset(presetId);
     if (!preset || !selection) return;
+    void chat.send(preset.build(selection), settingsRef.current);
+  };
 
-    const text = preset.build(selection);
-    if (presetId === 'send') setDraft(text);
-    else void chat.send(text, settingsRef.current);
+  /**
+   * 고른 부분을 첨부로 붙인다.
+   *
+   * ★ 살아 있는 선택을 페이지에서 직접 읽는 것이 우선이다. 우클릭 메뉴가 주는
+   *   글자는 크롬이 길이를 줄여 넘기므로, 긴 문단을 골랐을 때 뒷부분이 사라진다.
+   *   읽지 못한 경우(권한 거부·주입 실패)에만 메뉴가 준 글자로 대신한다.
+   */
+  const attachSelectionFor = async (tabId: number, fallback = '') => {
+    const settings = settingsRef.current;
+    // ★ 우클릭으로 패널이 방금 열렸다면 대화를 불러오는 중이다. 그 사이의 첨부
+    //   요청은 스토어가 그대로 되돌려 보내므로, 사용자에게는 메뉴가 먹지 않은 것으로 보인다.
+    await loaded();
+    const attached = await chat.attachSelection(tabId, settings);
+    if (attached) {
+      setComposerFocus((n) => n + 1);
+      return;
+    }
+    if (!fallback.trim()) return;
+    // 페이지를 읽지 못했다(권한 거부·주입 실패). 크롬이 넘겨준 글자로 대신한다.
+    chat.attachSelectionText(fallback, settings);
+    chat.clearError();
+    setComposerFocus((n) => n + 1);
   };
 
   /* ── 기억 큐 (Phase 6-1) ──
@@ -404,6 +438,18 @@ export default function App() {
     await chat.attachPage(tab.tabId, settings);
   };
 
+  /**
+   * 대화 도중 선택 영역 붙이기.
+   *
+   * ★ 패널을 눌러도 페이지의 선택은 남는다. 드래그한 뒤 이 버튼을 누르는 순서가
+   *   성립하는 이유다 — 우클릭까지 가지 않아도 된다.
+   */
+  const attachCurrentSelection = async () => {
+    if (!tab) return;
+    if (!(await ensureAccess(tab.url))) return;
+    await chat.attachSelection(tab.tabId, settings);
+  };
+
   /** 대화 도중 화면 캡처 붙이기 */
   const attachCurrentScreen = async () => {
     if (!tab) return;
@@ -557,6 +603,19 @@ export default function App() {
   // 대화가 시작된 뒤에도 페이지를 붙일 수 있어야 한다.
   const showAttach = !chat.page && canReadPage && chat.messages.length > 0;
   const showScreen = !chat.screenshot && canReadPage && chat.messages.length > 0;
+  /**
+   * 선택 영역 붙이기.
+   *
+   * ★ 이미 붙어 있어도 계속 띄운다. 페이지·화면과 달리 고른 곳을 바꿔 가며
+   *   이어 묻는 것이 기본 사용 방식이라, 한 번 붙였다고 버튼을 감추면
+   *   다음 문단을 고르려면 칩부터 떼어내야 한다.
+   *
+   * ★ 대화가 비어 있어도 띄운다. "문단을 고르고 그것부터 묻는다"가 이 기능의
+   *   첫 용도인데, 다른 첨부처럼 첫 메시지 뒤로 미루면 정작 그 순간에 버튼이 없다.
+   */
+  const showSelection = canReadPage;
+  // 고른 부분은 대개 한두 문단이다. 본문(약 {attachSec}초)과 견주는 값이라 실측 기준으로 잡는다.
+  const selectionSec = Math.max(1, Math.round(estimateTtfbSeconds(400)));
   const showRegen = chat.messages.some((m) => m.role === 'assistant');
 
   // 에이전트는 조작할 페이지가 있어야 의미가 있다. chrome:// 에서는 숨긴다.
@@ -665,12 +724,15 @@ export default function App() {
         {chat.screenshot && (
           <ScreenshotChip data={chat.screenshot} onDetach={chat.detachScreenshot} />
         )}
+        {chat.selection && (
+          <SelectionChip selection={chat.selection} onDetach={chat.detachSelection} />
+        )}
 
         {/*
           보조 동작은 한 줄에 모은다. 세로로 쌓으면 좁은 사이드패널에서
           입력창이 밀려 올라가고 대화가 보이는 높이가 줄어든다.
         */}
-        {!chat.streaming && (showAttach || showScreen || showRegen) && (
+        {!chat.streaming && (showAttach || showSelection || showScreen || showRegen) && (
           <div className="footer-actions">
             {showAttach && (
               <button
@@ -684,6 +746,18 @@ export default function App() {
                 {!chat.extracting && (
                   <span className="cost">{t('panel.secShort', { sec: attachSec })}</span>
                 )}
+              </button>
+            )}
+            {showSelection && (
+              <button
+                className="minibtn"
+                disabled={blocked || chat.extracting}
+                onClick={attachCurrentSelection}
+                title={t('panel.attachSelectionHint')}
+              >
+                <SelectIcon />
+                {t('panel.attachSelection')}
+                <span className="cost">{t('panel.secShort', { sec: selectionSec })}</span>
               </button>
             )}
             {showScreen && (
@@ -750,6 +824,7 @@ export default function App() {
           value={draft}
           commands={commands}
           agentMode={agentMode}
+          focusToken={composerFocus}
           onChange={setDraft}
           onSend={(t) => {
             setDraft('');
@@ -963,6 +1038,26 @@ function EmptyState({
   );
 }
 
+/**
+ * 대화 불러오기가 끝날 때까지 기다린다.
+ *
+ * 기다림이 끝나지 않는 경우(오류로 loading이 남는 경우)까지 붙들지 않도록 상한을 둔다.
+ */
+function loaded(timeoutMs = 3000): Promise<void> {
+  if (!useChat.getState().loading) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    const unsubscribe = useChat.subscribe((state) => {
+      if (!state.loading) done();
+    });
+  });
+}
+
 /* ── 아이콘 ────────────────────────────────────────────── */
 
 function CameraIcon() {
@@ -988,6 +1083,16 @@ function PageIcon() {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <path d="M14 2v6h6" />
+    </svg>
+  );
+}
+
+/** 글자를 드래그해 고른 모양 — 텍스트 커서와 선택 영역. */
+function SelectIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 5h11M4 12h8M4 19h6" />
+      <path d="M17 10v10M14 10h6M14 20h6" />
     </svg>
   );
 }

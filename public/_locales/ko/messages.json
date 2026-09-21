@@ -6,5 +6,5 @@
   "menuTranslate":  { "message": "이 문장 번역", "description": "컨텍스트 메뉴" },
   "menuExplain":    { "message": "쉽게 설명", "description": "컨텍스트 메뉴" },
   "menuPolish":     { "message": "문장 다듬기", "description": "컨텍스트 메뉴" },
-  "menuSend":       { "message": "sAIde 사이드패널로 보내기", "description": "컨텍스트 메뉴" }
+  "menuAsk":        { "message": "선택 영역으로 sAIde에 묻기", "description": "컨텍스트 메뉴" }
 }

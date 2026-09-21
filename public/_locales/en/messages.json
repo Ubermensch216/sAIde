@@ -6,5 +6,5 @@
   "menuTranslate":  { "message": "Translate this", "description": "Context menu" },
   "menuExplain":    { "message": "Explain simply", "description": "Context menu" },
   "menuPolish":     { "message": "Polish this text", "description": "Context menu" },
-  "menuSend":       { "message": "Send to the sAIde side panel", "description": "Context menu" }
+  "menuAsk":        { "message": "Ask sAIde about this selection", "description": "Context menu" }
 }

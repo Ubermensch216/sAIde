@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  ASK_SELECTION_ID,
   builtinCommands,
   namesOf,
   customCommands,
@@ -201,9 +202,15 @@ describe('프리셋 정의', () => {
 
   it('컨텍스트 메뉴 id가 프리셋에 모두 존재한다', () => {
     // background.ts의 메뉴 id와 어긋나면 클릭해도 아무 일도 안 일어난다
-    for (const id of ['translate', 'explain', 'polish', 'send']) {
+    for (const id of ['translate', 'explain', 'polish']) {
       expect(findPreset(id), id).toBeDefined();
     }
+  });
+
+  it('선택 영역으로 묻기는 프리셋이 아니다', () => {
+    // 프롬프트를 만들지 않고 고른 부분을 첨부로 붙이기만 한다(App.tsx가 처리).
+    // 여기에 프리셋이 생기면 우클릭 한 번에 질문 없는 요청이 모델로 나간다.
+    expect(findPreset(ASK_SELECTION_ID)).toBeUndefined();
   });
 });
 

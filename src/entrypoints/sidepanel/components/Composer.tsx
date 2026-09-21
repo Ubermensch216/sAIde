@@ -4,8 +4,8 @@
  * 생성 중에는 전송 버튼이 중단 버튼으로 바뀐다. 별도 버튼을 두면
  * 좁은 사이드패널에서 자리를 낭비하고, 무엇을 눌러야 할지도 모호해진다.
  *
- * 값을 부모가 들고 있는 제어 컴포넌트다 — 컨텍스트 메뉴의 '사이드패널로
- * 보내기'가 선택 텍스트를 입력창에 넣어야 하기 때문이다.
+ * 값을 부모가 들고 있는 제어 컴포넌트다 — 슬래시 커맨드가 예문을 입력창에
+ * 남기는 등, 바깥에서 입력값을 손대야 하는 경로가 있기 때문이다.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -20,6 +20,13 @@ interface Props {
   commands: SlashCommand[];
   /** 에이전트 모드인가. 입력창 안내 문구만 바뀐다. */
   agentMode?: boolean;
+  /**
+   * 값이 바뀌면 입력창에 포커스를 준다.
+   *
+   * ★ 우클릭으로 선택 영역을 붙인 직후를 위한 것이다. 그 순간 사용자는 무엇을
+   *   물을지 쓰려는 참인데, 포커스가 없으면 패널을 한 번 더 클릭해야 한다.
+   */
+  focusToken?: number;
   onChange: (v: string) => void;
   onSend: (text: string) => void;
   onSlash: (cmd: SlashCommand, rest: string) => void;
@@ -32,6 +39,7 @@ export function Composer({
   value,
   commands,
   agentMode,
+  focusToken,
   onChange,
   onSend,
   onSlash,
@@ -46,6 +54,10 @@ export function Composer({
 
   // 후보가 바뀌면 선택을 처음으로 되돌린다.
   useEffect(() => setActive(0), [value]);
+
+  useEffect(() => {
+    if (focusToken) ref.current?.focus();
+  }, [focusToken]);
 
   // 입력 길이에 따라 높이를 늘린다(최대 6줄).
   useEffect(() => {

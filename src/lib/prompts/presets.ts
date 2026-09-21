@@ -216,14 +216,19 @@ export const SELECTION_PRESETS: Preset[] = [
     build: (s = '') =>
       `다음 문장을 뜻은 그대로 두고 더 자연스럽게 다듬어줘. 다듬은 결과만 보여줘.\n\n${wrapSelection(s)}`,
   },
-  {
-    id: 'send',
-    label: '사이드패널로 보내기',
-    needs: 'selection',
-    // 사용자가 무엇을 물을지 정한다. 입력창에 넣어만 준다.
-    build: (s = '') => wrapSelection(s),
-  },
 ];
+
+/**
+ * 우클릭 메뉴의 "선택 영역으로 묻기".
+ *
+ * ★ 프리셋이 아니다. 프롬프트를 만들지 않고 고른 부분을 **첨부로** 붙이기만 한다.
+ *   전에 있던 'send'는 <page_content> 태그째로 입력창을 채워, 정작 질문을 쓸
+ *   자리를 원문이 덮었다. 무엇을 물을지는 빈 입력창에 사용자가 쓴다.
+ *
+ * ★ 'ask'가 아니다 — 그 id는 페이지 프리셋("이 페이지에 대해 질문")이 이미 쓴다.
+ *   같은 id를 나눠 쓰면 우클릭 메뉴가 어느 쪽을 부르는지 읽는 사람마다 달라진다.
+ */
+export const ASK_SELECTION_ID = 'ask-selection';
 
 export const ALL_PRESETS = [...PAGE_PRESETS, ...SELECTION_PRESETS];
 

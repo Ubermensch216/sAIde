@@ -136,6 +136,27 @@
   background: var(--surface);
 }
 
+/* ── 선택 영역 칩 ── */
+
+.pagechip.selection {
+  border-left-color: var(--accent);
+}
+
+/*
+ * 고른 글자를 그대로 보여준다. 페이지 제목과 달리 이것은 인용이므로,
+ * 굵게 쓰지 않고 따옴표로 감싸 "페이지에서 가져온 말"임을 드러낸다.
+ */
+.sel-quote {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.sel-quote::before,
+.sel-quote::after {
+  content: '"';
+  color: var(--fg-muted);
+}
+
 /* ── 슬래시 자동완성 (Phase 4-3) ── */
 
 .composer-wrap {

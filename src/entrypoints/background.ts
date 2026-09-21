@@ -150,7 +150,12 @@ const MENUS: Array<{ id: string; messageKey: string }> = [
   { id: 'saide.translate', messageKey: 'menuTranslate' },
   { id: 'saide.explain', messageKey: 'menuExplain' },
   { id: 'saide.polish', messageKey: 'menuPolish' },
-  { id: 'saide.send', messageKey: 'menuSend' },
+  /**
+   * ★ 'send'(원문을 입력창에 붙여넣기)를 대신한다.
+   *   붙여넣기는 <page_content> 태그째로 입력창을 채워, 정작 질문을 쓸 자리를 덮었다.
+   *   지금은 고른 부분을 첨부로 붙이고 입력창은 비워 둔다 — 무엇을 물을지는 사용자가 쓴다.
+   */
+  { id: 'saide.ask-selection', messageKey: 'menuAsk' },
 ];
 
 function registerContextMenus() {
@@ -207,6 +212,17 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
         const texts = await Promise.all(res.pdf.map(pdfText));
         return { type: 'PAGE_EXTRACTED', payload: withPdfSections(res.payload, texts, msg.budgetTokens) };
       }
+      if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
+    }
+
+    case 'EXTRACT_SELECTION': {
+      const res = await withContentScript(msg.tabId, {
+        type: 'EXTRACT_SELECTION',
+        budgetTokens: msg.budgetTokens,
+        control,
+      });
+      if (res.type === 'SELECTED') return { type: 'SELECTION_EXTRACTED', payload: res.payload };
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
     }

@@ -19,6 +19,8 @@ const METHOD_KEY = {
   innerText: 'page.method.innerText',
   'youtube-caption': 'page.method.youtube',
   pdf: 'page.method.pdf',
+  // 선택 영역은 제 칩(SelectionChip)이 그린다. 여기 값은 타입을 채우기 위한 것이다.
+  selection: 'page.method.selection',
 } as const satisfies Record<ExtractedPage['method'], MessageKey>;
 
 export function PageContextChip({ page, onDetach }: Props) {

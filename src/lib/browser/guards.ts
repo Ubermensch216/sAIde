@@ -40,7 +40,8 @@ export function validPanelRequest(v: unknown): v is PanelToSW {
   if (v.type === 'GET_ACTIVE_TAB' || v.type === 'LIST_TABS') return true;
   if (!Number.isInteger(v.tabId) || (v.tabId as number) < 0 || !validControl(v.control)) return false;
   if (v.type === 'CAPTURE_SCREENSHOT') return true;
-  if (v.type === 'EXTRACT_PAGE') return Number.isInteger(v.budgetTokens) && (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000;
+  if (v.type === 'EXTRACT_PAGE' || v.type === 'EXTRACT_SELECTION')
+    return Number.isInteger(v.budgetTokens) && (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000;
   if (v.type === 'PREPARE_ACTION') return validAction(v.action) && requiresApproval(v.action);
   if (v.type === 'EXEC_ACTION') return validAction(v.action) && (!requiresApproval(v.action) || !!v.control.approvalToken);
   return false;

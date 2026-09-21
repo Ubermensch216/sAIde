@@ -17,7 +17,12 @@
  */
 
 import type { ChatMessage } from '@/types/ollama';
-import { PAGE_ACK, buildSystemPrompt, wrapPageContent } from '@/lib/prompts/system';
+import {
+  PAGE_ACK,
+  buildSystemPrompt,
+  wrapPageContent,
+  wrapSelectionContent,
+} from '@/lib/prompts/system';
 import {
   estimateTokens,
   fitToBudget,
@@ -63,6 +68,30 @@ export interface Attachment {
   page?: AttachedPage | null;
   /** base64 PNG (data: 프리픽스 제외) */
   screenshot?: string | null;
+  /**
+   * 사용자가 페이지에서 드래그해 고른 부분. 본문과 **함께** 붙을 수 있다.
+   *
+   * ★ 본문을 대신하지 않는다. 고른 문단만으로는 앞뒤 맥락이 없어 "이게 왜
+   *   문제인가" 같은 질문에 답할 수 없는 경우가 많다. 본문은 맥락으로 남기고,
+   *   고른 부분은 "질문이 가리키는 곳"으로 따로 표시한다.
+   *
+   * ★ 고정 블록의 **맨 뒤**에 놓인다. 사용자가 다른 문단을 고를 때마다 이 부분은
+   *   바뀌는데, 앞에 두면 그때마다 본문(2,000토큰)까지 재프리필된다. 뒤에 두면
+   *   바뀐 뒤쪽만 다시 문다 — 선택 300토큰이면 약 2.3초다.
+   */
+  selection?: AttachedSelection | null;
+}
+
+/**
+ * 컨텍스트에 붙일 선택 영역.
+ *
+ * ★ 페이지와 마찬가지로 절단 사실을 함께 들고 다닌다. 고른 부분이 조용히
+ *   잘리면 사용자는 모델이 못 본 문장을 근거로 답을 읽게 된다.
+ */
+export interface AttachedSelection {
+  text: string;
+  truncated?: boolean;
+  keptRatio?: number;
 }
 
 /**
@@ -80,6 +109,9 @@ export const CONTEXT_RESERVE_TOKENS = 256;
 
 /** 아무리 좁아도 본문을 이보다 더 잘라내지는 않는다. */
 const MIN_PAGE_TOKENS = 64;
+
+/** 고른 부분의 하한. 본문보다 높게 잡는다 — 질문이 가리키는 대상이기 때문이다. */
+const MIN_SELECTION_TOKENS = 128;
 
 /**
  * 오래된 턴부터 버려 예산 안에 맞춘다.
@@ -173,7 +205,7 @@ export function buildContext(
  */
 function pinnedMessages(att: Attachment, systemPrompt: string): ChatMessage[] {
   const ctx: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
-  if (!att.page && !att.screenshot) return ctx;
+  if (!att.page && !att.screenshot && !att.selection) return ctx;
 
   /**
    * ★ 캡처가 붙었으면 그 사실을 **텍스트로도** 적는다.
@@ -187,6 +219,8 @@ function pinnedMessages(att: Attachment, systemPrompt: string): ChatMessage[] {
   const parts: string[] = [];
   if (att.page) parts.push(wrapPageContent(att.page));
   if (att.screenshot) parts.push(SCREEN_NOTE);
+  // ★ 반드시 마지막이다. 위 머리말(Attachment.selection) 참조.
+  if (att.selection) parts.push(wrapSelectionContent(att.selection));
 
   const msg: ChatMessage = { role: 'user', content: parts.join('\n\n') };
   if (att.screenshot) msg.images = [att.screenshot];
@@ -214,53 +248,93 @@ export function fitAttachment(
   numCtx: number,
   opts: { systemPrompt?: string; reservedTokens?: number } = {},
 ): Attachment {
-  const page = att.page;
-  if (!page) return att;
+  if (!att.page && !att.selection) return att;
 
   const systemPrompt = opts.systemPrompt ?? buildSystemPrompt();
   const room =
     promptBudget(numCtx) - (opts.reservedTokens ?? 0) - CONTEXT_RESERVE_TOKENS;
 
   /**
-   * 잘라낸 본문이 실제로 어떤 모습으로 나갈지 — 재는 것과 내보내는 것이
-   * **같은 객체**여야 한다.
+   * 재는 것과 내보내는 것이 **같은 객체**여야 한다.
    *
    * ★ 처음에는 잘린 text만 끼워 재고 truncated는 나중에 켰다. 그러자
    *   wrapPageContent가 붙이는 "참고: 앞부분 N%만 담고 있다" 한 줄이 측정에
    *   빠져, 맞췄다고 판단한 블록이 실제로는 그만큼 더 컸다. 같은 종류의
    *   어긋남(재는 자와 쓰는 자가 다른 것)이 애초에 이 버그의 원인이었다.
    */
-  const candidate = (text: string): AttachedPage =>
-    text === page.text
-      ? page
-      : {
-          ...page,
-          text,
-          truncated: true,
-          // 추출 단계에서 이미 잘렸을 수 있다. 원문 대비 비율로 합쳐 고지한다.
-          keptRatio: (page.keptRatio ?? 1) * (text.length / page.text.length),
-        };
+  const measure = (a: Attachment) => promptTokens(pinnedMessages(a, systemPrompt));
+  if (measure(att) <= room) return att;
 
-  const costWith = (text: string) =>
-    promptTokens(pinnedMessages({ ...att, page: candidate(text) }, systemPrompt));
+  let out = att;
 
-  if (costWith(page.text) <= room) return att;
-
-  // 래퍼·안내문의 토큰 비용은 글자 수에 선형이 아니다 — 한글 비율에 따라
-  // 자·토큰 비가 달라지므로 한 번에 정확히 맞출 수 없다. 넘친 만큼 빼며
-  // 몇 번 수렴시킨다. 더 줄지 않으면 멈춘다(무한 루프 방지).
-  let text = page.text;
-  for (let i = 0; i < 5; i++) {
-    const over = costWith(text) - room;
-    if (over <= 0) break;
-    const target = Math.max(MIN_PAGE_TOKENS, estimateTokens(text) - over);
-    const next = fitToBudget(text, target).text;
-    if (next.length >= text.length) break;
-    text = next;
+  /**
+   * ★ 순서가 곧 우선순위다. 자리가 모자라면 **페이지 본문이 먼저 양보한다.**
+   *   선택 영역은 사용자가 직접 가리킨 곳이라, 그쪽이 먼저 잘리면 질문이
+   *   가리키는 대상 자체가 어긋난다. 본문은 맥락이므로 줄어도 질문은 성립한다.
+   */
+  const page = out.page;
+  if (page) {
+    const withText = (text: string): Attachment => ({ ...out, page: shrunk(page, text) });
+    const text = converge(page.text, MIN_PAGE_TOKENS, room, (t) => measure(withText(t)));
+    if (text !== page.text) out = withText(text);
   }
 
-  if (text === page.text) return att;
-  return { ...att, page: candidate(text) };
+  // 본문을 최소치까지 줄이고도 넘친다. 남은 것은 고른 부분뿐이다.
+  const selection = out.selection;
+  if (selection && measure(out) > room) {
+    const base = out;
+    const withText = (text: string): Attachment => ({
+      ...base,
+      selection: shrunk(selection, text),
+    });
+    const text = converge(selection.text, MIN_SELECTION_TOKENS, room, (t) => measure(withText(t)));
+    if (text !== selection.text) out = withText(text);
+  }
+
+  return out;
+}
+
+/**
+ * 잘린 조각이 실제로 어떤 모습으로 나갈지. 절단 사실과 비율을 함께 켠다.
+ *
+ * 추출 단계에서 이미 잘렸을 수 있으므로 원문 대비 비율로 합쳐 고지한다.
+ */
+function shrunk<T extends { text: string; truncated?: boolean; keptRatio?: number }>(
+  part: T,
+  text: string,
+): T {
+  if (text === part.text) return part;
+  return {
+    ...part,
+    text,
+    truncated: true,
+    keptRatio: (part.keptRatio ?? 1) * (text.length / part.text.length),
+  };
+}
+
+/**
+ * 넘친 만큼 빼며 몇 번 수렴시킨다.
+ *
+ * 래퍼·안내문의 토큰 비용은 글자 수에 선형이 아니다 — 한글 비율에 따라
+ * 자·토큰 비가 달라지므로 한 번에 정확히 맞출 수 없다. 더 줄지 않으면
+ * 멈춘다(무한 루프 방지).
+ */
+function converge(
+  text: string,
+  minTokens: number,
+  room: number,
+  costWith: (text: string) => number,
+): string {
+  let out = text;
+  for (let i = 0; i < 5; i++) {
+    const over = costWith(out) - room;
+    if (over <= 0) break;
+    const target = Math.max(minTokens, estimateTokens(out) - over);
+    const next = fitToBudget(out, target).text;
+    if (next.length >= out.length) break;
+    out = next;
+  }
+  return out;
 }
 
 /** 화면 캡처가 붙었을 때의 안내. 이 문자열도 상수여야 접두사가 안정된다. */
@@ -276,12 +350,28 @@ const SCREEN_NOTE =
  *   첨부 조합별로 상수라 접두사 안정성은 그대로다.
  */
 function ackFor(att: Attachment): string {
-  if (att.page && att.screenshot) return PAGE_SCREEN_ACK;
-  return att.screenshot ? SCREEN_ACK : PAGE_ACK;
+  // 붙은 조합별로 결정되는 값이라 접두사는 여전히 상수다.
+  const parts: string[] = [];
+  if (att.page) parts.push('페이지 내용');
+  if (att.screenshot) parts.push('화면 캡처');
+  if (att.selection) parts.push('선택한 부분');
+  if (!parts.length) return PAGE_ACK;
+  return `${joinKo(parts)} 확인했습니다.`;
 }
 
-const SCREEN_ACK = '화면 캡처를 확인했습니다.';
-const PAGE_SCREEN_ACK = '페이지 내용과 화면 캡처를 확인했습니다.';
+/** '페이지 내용과 선택한 부분을' — 마지막 낱말의 받침에 따라 조사를 고른다. */
+function joinKo(parts: string[]): string {
+  const last = parts[parts.length - 1]!;
+  const head = parts.slice(0, -1);
+  const object = hasFinalConsonant(last) ? `${last}을` : `${last}를`;
+  return [...head, object].join('과 ');
+}
+
+function hasFinalConsonant(word: string): boolean {
+  const code = word.charCodeAt(word.length - 1);
+  if (code < 0xac00 || code > 0xd7a3) return true;
+  return (code - 0xac00) % 28 !== 0;
+}
 
 /** AttachedPage 하나만 넘기던 이전 호출 형태도 계속 받아준다. */
 function normalizeAttachment(

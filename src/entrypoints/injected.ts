@@ -19,6 +19,7 @@ import { Readability } from '@mozilla/readability';
 import { fitToBudget } from '@/lib/extract/budget';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import { collectDocumentText } from '@/lib/extract/document-text';
+import { readSelection } from '@/lib/extract/selection';
 import {
   extractYouTubeCaption,
   isYouTubeWatch,
@@ -77,6 +78,17 @@ export default defineUnlistedScript(() => {
           const pdfUrls = findPdfUrls();
           const pdf = pdfUrls.length ? await readPdfSources(pdfUrls) : [];
           sendResponse({ type: 'EXTRACTED', payload, ...(pdf.length ? { pdf } : {}) } satisfies ContentToSW);
+        } else if (msg.type === 'EXTRACT_SELECTION') {
+          const payload = extractSelection(msg.budgetTokens);
+          if (!payload.text) {
+            // 실패가 아니라 순서가 덜 끝난 것이다. 무엇을 먼저 하면 되는지만 알린다.
+            sendResponse({
+              type: 'FAILED',
+              error: { code: 'SELECTION_EMPTY', message: '' },
+            } satisfies ContentToSW);
+          } else {
+            sendResponse({ type: 'SELECTED', payload } satisfies ContentToSW);
+          }
         } else if (msg.type === 'ACT' && validAction(msg.action)) {
           sendResponse({
             type: 'ACTED',
@@ -143,6 +155,33 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
     keptRatio: budgeted.keptRatio,
     estimatedTokens: budgeted.estimatedTokens,
     method,
+    extractedAt: Date.now(),
+  };
+}
+
+/**
+ * 사용자가 드래그해 고른 부분만 읽는다.
+ *
+ * ★ 본문 추출과 달리 폴백이 없다. 선택이 비어 있으면 빈 payload를 돌려주고,
+ *   호출한 쪽이 "먼저 드래그하라"고 알린다. 여기서 페이지 전체로 슬쩍 갈아타면
+ *   사용자는 고른 적 없는 2,000토큰을 프리필 비용으로 물게 된다.
+ *
+ * ★ 예산은 그대로 적용한다. 페이지를 통째로 드래그(Ctrl+A)하는 경우가 있어
+ *   상한이 없으면 컨텍스트가 넘친다.
+ */
+function extractSelection(budgetTokens: number): ExtractedPage {
+  const raw = readSelection();
+  const budgeted = fitToBudget(raw, budgetTokens);
+
+  return {
+    url: location.href,
+    title: document.title,
+    text: budgeted.text,
+    charCount: raw.length,
+    truncated: budgeted.truncated,
+    keptRatio: budgeted.keptRatio,
+    estimatedTokens: budgeted.estimatedTokens,
+    method: 'selection',
     extractedAt: Date.now(),
   };
 }

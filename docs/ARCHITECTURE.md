@@ -28,7 +28,7 @@ flowchart LR
 | 모델 전송 | `src/lib/ollama/{client,stream,errors}.ts` | REST, NDJSON, 성능 수집, 오류 분류 |
 | 워커 | `src/entrypoints/background.ts` | 탭·우클릭 이벤트, 요청 검증·취소, 주입·캡처 라우팅 |
 | 브라우저 보호 | `src/lib/browser/{guards,approval}.ts` | sender/payload·캡처 대상 검사, 문서별 일회용 승인 토큰 |
-| 주입 코드 | `src/entrypoints/injected.ts` | Readability/innerText/자막 추출, PDF 원본 수신, DOM 조작 |
+| 주입 코드 | `src/entrypoints/injected.ts` | Readability/innerText/자막/선택 영역 추출, PDF 원본 수신, DOM 조작 |
 | 도구 | `src/lib/agent/{tools,loop,executor}.ts` | 8종 스키마, 승인·반복 제한, 브라우저 실행 어댑터 |
 | 메모리 | `src/lib/memory/{queue,store,recall}.ts` | 유휴 임베딩, 청크 저장, 코사인 검색, 근거 프롬프트 |
 | 일정 | `src/lib/schedule/*` | 항목·기한 파서, 달력 계산, 자연어 의도 분류, 알람 알림, CSV/ICS |
@@ -44,6 +44,8 @@ LLM 호출은 서비스 워커가 아닌 패널 문서에서 수행한다. 따�
 ## 컨텍스트 구성
 
 대화에는 **문맥 경계**(`contextFrom`)가 있다. 본문을 새로 붙이거나 떼면 경계가 그 시점으로 옮겨 가고, 그보다 앞선 문답은 화면에 남되 모델 전송 문맥에서 빠진다. 앞 문서 요약이 다음 문서 답변에 섞이는 것과 좁은 문맥을 함께 막는다.
+
+첨부는 **페이지 본문·화면 캡처·선택 영역** 세 가지이며 함께 붙을 수 있다. 선택 영역은 본문을 대체하지 않고 고정 블록의 **맨 뒤**에 놓인다 — 사용자가 고르는 곳은 자주 바뀌므로, 앞에 두면 바꿀 때마다 본문까지 다시 프리필된다. 자리가 모자라면 본문이 먼저 잘리고 선택 영역은 마지막까지 지킨다. 선택 영역을 갈아끼워도 문맥 경계는 옮기지 않는다(같은 문서에 대한 문답이므로 앞선 대화가 여전히 유효하다).
 
 일반 대화는 시스템 메시지 → 첨부 본문/이미지 블록 → 고정 확인 응답 → 대화 이력 순서다. 안정적인 접두사로 캐시 활용을 돕고 이전 thinking은 입력에 넣지 않는다. 오래된 메시지를 제외한 뒤 전송 경계에서 전체 메시지·도구 스키마·호출·이미지 비용을 다시 추정한다. numCtx의 70%를 넘으면 HTTP 전송을 거부한다. pinned 본문 자동 축약은 아직 없으며 토큰 추정은 tokenizer 보장이 아니다.
 

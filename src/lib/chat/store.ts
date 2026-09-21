@@ -32,9 +32,10 @@ import {
   fitAttachment,
   uncachedPrefillSeconds,
   type AttachedPage,
+  type AttachedSelection,
   type Attachment,
 } from '@/lib/chat/context';
-import { estimateTokens } from '@/lib/extract/budget';
+import { estimateTokens, fitToBudget } from '@/lib/extract/budget';
 import { sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
@@ -87,6 +88,13 @@ interface ChatState {
    * 실측상 약 262토큰 — 페이지 본문(2,000토큰)보다 8배 싸다.
    */
   screenshot: string | null;
+  /**
+   * 사용자가 페이지에서 드래그해 고른 부분.
+   *
+   * ★ 본문을 대신하지 않고 **나란히** 붙는다. 본문은 맥락으로 남고, 이쪽은
+   *   질문이 가리키는 곳이 된다. 고른 부분만 300토큰이면 프리필 약 2.3초다.
+   */
+  selection: ExtractedPage | null;
   /** 페이지 추출 또는 화면 캡처 진행 중 */
   extracting: boolean;
   /**
@@ -154,8 +162,13 @@ interface ChatState {
   noteScreenChange: (frameId: number) => void;
   attachPage: (tabId: number, settings: Settings) => Promise<ExtractedPage | null>;
   attachScreenshot: (tabId: number) => Promise<string | null>;
+  /** 페이지에서 지금 드래그되어 있는 부분을 읽어 붙인다. 없으면 오류를 남기고 null. */
+  attachSelection: (tabId: number, settings: Settings) => Promise<ExtractedPage | null>;
+  /** 우클릭 메뉴가 넘겨준 선택 텍스트를 그대로 붙인다. 페이지를 다시 읽지 않는다. */
+  attachSelectionText: (text: string, settings: Settings) => ExtractedPage | null;
   detachPage: () => void;
   detachScreenshot: () => void;
+  detachSelection: () => void;
   send: (text: string, settings: Settings) => Promise<void>;
   /** 에이전트 모드 전송 (Phase 5). 툴을 붙여 최대 8턴까지 돈다. */
   sendAgent: (text: string, settings: Settings, tab: AgentTab) => Promise<void>;
@@ -188,6 +201,7 @@ export const useChat = create<ChatState>((set, get) => ({
   messages: [],
   page: null,
   screenshot: null,
+  selection: null,
   extracting: false,
   currentUrl: '',
   contextFrom: 0,
@@ -208,7 +222,7 @@ export const useChat = create<ChatState>((set, get) => ({
     get().stop();
     const epoch = ++viewEpoch;
     ++attachmentEpoch;
-    set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [], contextFrom: 0, screenChangedAt: 0 });
+    set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, selection: null, currentUrl: url, error: null, lastContext: null, agentSteps: [], contextFrom: 0, screenChangedAt: 0 });
     try {
       const conversation = await findForTab(tabId, url);
       const messages = conversation ? await listMessages(conversation.id) : [];
@@ -220,7 +234,7 @@ export const useChat = create<ChatState>((set, get) => ({
     get().stop();
     const epoch = ++viewEpoch;
     ++attachmentEpoch;
-    set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
+    set({ loading: true, extracting: false, page: null, screenshot: null, selection: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
     try {
       const messages = await listMessages(conversation.id);
       if (epoch === viewEpoch) set({ conversation, messages, loading: false, contextFrom: conversation.contextFrom ?? 0 });
@@ -257,7 +271,7 @@ export const useChat = create<ChatState>((set, get) => ({
    */
   noteScreenChange(frameId) {
     const page = get().page;
-    if (!page && !get().screenshot) return;
+    if (!page && !get().screenshot && !get().selection) return;
     const attachedFrame = page?.sourceFrameId ?? 0;
     if (frameId !== 0 && page && frameId !== attachedFrame) return;
     set({ screenChangedAt: Date.now() });
@@ -341,8 +355,86 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
 
+  /**
+   * 지금 페이지에 드래그되어 있는 부분을 읽어 붙인다.
+   *
+   * ★ 패널을 눌러도 페이지의 선택은 남는다. 그래서 "드래그 → 패널 버튼" 순서가
+   *   성립한다. 우클릭 메뉴도 같은 경로를 쓴다 — 메뉴가 주는 selectionText는
+   *   크롬이 길이를 줄여 넘기므로, 살아 있는 선택을 직접 읽는 쪽이 온전하다.
+   *
+   * ★ 고른 부분이 없으면 페이지 본문으로 슬쩍 갈아타지 않는다. 고른 적 없는
+   *   2,000토큰을 사용자가 프리필 비용으로 무는 일은 없어야 한다.
+   *
+   * ★ 문맥 경계를 옮기지 않는다. 본문 교체와 달리 앞선 문답은 여전히 같은
+   *   문서에 대한 것이라 근거로 유효하다. 고른 곳을 바꿔 가며 이어 묻는 것이
+   *   이 기능의 기본 사용 방식이다.
+   */
+  async attachSelection(tabId, settings) {
+    if (get().extracting || get().loading) return get().selection;
+    const epoch = ++attachmentEpoch;
+    const expectedUrl = get().currentUrl;
+
+    set({ extracting: true, error: null });
+    try {
+      const res = await sendToSW({
+        type: 'EXTRACT_SELECTION',
+        tabId,
+        budgetTokens: selectionBudget(settings),
+        control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined },
+      });
+      if (epoch !== attachmentEpoch) return null;
+
+      if (res.type === 'ERROR') {
+        set({ error: res.error });
+        return null;
+      }
+      if (res.type !== 'SELECTION_EXTRACTED') return null;
+
+      const selection = res.payload;
+      // 같은 글자를 다시 붙이면 접두사가 그대로다. 굳이 갈아끼우지 않는다.
+      const current = get().selection;
+      if (current && current.text === selection.text) return current;
+
+      set({ selection, lastContext: null });
+      return selection;
+    } catch (error) {
+      if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
+      return null;
+    } finally {
+      if (epoch === attachmentEpoch) set({ extracting: false });
+    }
+  },
+
+  /**
+   * 우클릭 메뉴가 넘겨준 글자를 그대로 붙인다.
+   *
+   * ★ 페이지를 읽을 수 없을 때의 대비책이다(권한 거부, 주입 실패). 크롬이 이미
+   *   넘겨준 글자라 추가 권한이 필요 없다.
+   */
+  attachSelectionText(text, settings) {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const budgeted = fitToBudget(trimmed, selectionBudget(settings));
+    const selection: ExtractedPage = {
+      url: get().currentUrl,
+      title: '',
+      text: budgeted.text,
+      charCount: trimmed.length,
+      truncated: budgeted.truncated,
+      keptRatio: budgeted.keptRatio,
+      estimatedTokens: budgeted.estimatedTokens,
+      method: 'selection',
+      extractedAt: Date.now(),
+    };
+    ++attachmentEpoch;
+    set({ selection, lastContext: null, error: null });
+    return selection;
+  },
+
   detachPage: () => { ++attachmentEpoch; set({ page: null, lastContext: null, extracting: false }); void moveContextBoundary(set, get, nextStamp(get())); },
   detachScreenshot: () => { ++attachmentEpoch; set({ screenshot: null, lastContext: null, extracting: false }); },
+  detachSelection: () => { ++attachmentEpoch; set({ selection: null, lastContext: null, extracting: false }); },
 
   async send(text, settings) { await submit(set, get, text, settings); },
   async sendAgent(text, settings, tab) { await submit(set, get, text, settings, tab); },
@@ -399,7 +491,7 @@ export const useChat = create<ChatState>((set, get) => ({
       set({
         conversation: null,
         pending: conversation ? { tabId: conversation.tabId, url: conversation.originUrl } : pending,
-        messages: [], page: null, screenshot: null, lastContext: null, contextFrom: 0,
+        messages: [], page: null, screenshot: null, selection: null, lastContext: null, contextFrom: 0,
         agentSteps: [], agentTurn: 0, expectedPrefillSec: 0, pendingSchedule: null,
       });
     } catch (error) { set({ error: toAppError(null, error) }); }
@@ -527,7 +619,21 @@ async function ensureConversation(
   return conv;
 }
 
-function toAttachment(page: ExtractedPage | null, screenshot: string | null): Attachment {
+/**
+ * 고른 부분의 상한.
+ *
+ * 본문 예산과 같은 값을 쓴다. Ctrl+A로 문서를 통째로 고르는 경우가 있어 상한은
+ * 필요하지만, 사용자가 직접 고른 양을 본문보다 더 깎을 이유는 없다.
+ */
+function selectionBudget(settings: Settings): number {
+  return settings.pageTokenBudget;
+}
+
+function toAttachment(
+  page: ExtractedPage | null,
+  screenshot: string | null,
+  selection: ExtractedPage | null = null,
+): Attachment {
   const p: AttachedPage | null = page
     ? {
         url: page.url,
@@ -537,7 +643,10 @@ function toAttachment(page: ExtractedPage | null, screenshot: string | null): At
         keptRatio: page.keptRatio,
       }
     : null;
-  return { page: p, screenshot };
+  const sel: AttachedSelection | null = selection
+    ? { text: selection.text, truncated: selection.truncated, keptRatio: selection.keptRatio }
+    : null;
+  return { page: p, screenshot, selection: sel };
 }
 
 /**
@@ -554,18 +663,29 @@ function toAttachment(page: ExtractedPage | null, screenshot: string | null): At
 function freshAttachment(
   set: Set,
   get: Get,
-): { page: ExtractedPage | null; screenshot: string | null; stale: boolean } {
+): {
+  page: ExtractedPage | null;
+  screenshot: string | null;
+  selection: ExtractedPage | null;
+  stale: boolean;
+} {
   const currentUrl = get().currentUrl;
   const rawPage = get().page;
+  const rawSelection = get().selection;
   // 주소가 같아도 화면이 바뀌었으면 지난 본문이다(프레임으로 문서를 갈아 끼우는 사이트).
-  const screenMoved = Boolean(rawPage && get().screenChangedAt > rawPage.extractedAt);
-  const stale = Boolean(rawPage && currentUrl && !sameDocument(rawPage.url, currentUrl)) || screenMoved;
+  const moved = (part: ExtractedPage | null) =>
+    Boolean(part && get().screenChangedAt > part.extractedAt);
+  const gone = (part: ExtractedPage | null) =>
+    Boolean(part && currentUrl && part.url && !sameDocument(part.url, currentUrl));
+  // 고른 부분도 같은 자로 잰다. 페이지가 바뀌면 그때 고른 문단도 더 이상 이 화면의 것이 아니다.
+  const stale = gone(rawPage) || moved(rawPage) || gone(rawSelection) || moved(rawSelection);
 
-  if (stale) set({ page: null, screenshot: null, lastContext: null });
+  if (stale) set({ page: null, screenshot: null, selection: null, lastContext: null });
 
   return {
     page: stale ? null : rawPage,
     screenshot: stale ? null : get().screenshot,
+    selection: stale ? null : rawSelection,
     stale,
   };
 }
@@ -580,12 +700,12 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   const abort = get().abort ?? new AbortController();
   const startedAt = Date.now();
 
-  const { page, screenshot, stale } = freshAttachment(set, get);
+  const { page, screenshot, selection, stale } = freshAttachment(set, get);
 
   // ★ 먼저 예산에 맞춘 첨부를 만든다. buildContext도 같은 함수를 부르지만
   //   멱등이라 결과가 같다 — 여기서 미리 부르는 이유는 절단 고지에 실제로
   //   모델이 본 비율을 적기 위해서다.
-  const attachment = fitAttachment(toAttachment(page, screenshot), settings.numCtx);
+  const attachment = fitAttachment(toAttachment(page, screenshot, selection), settings.numCtx);
 
   const context = buildContext(contextMessages(get()), settings.numCtx, attachment);
   // 캐시 적중분을 뺀 예상 대기시간. 페이지를 붙인 후속 질문은 이 값이 거의 0이다.
@@ -640,12 +760,20 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
 
   // 추출 단계의 절단과 컨텍스트에 맞추느라 생긴 절단을 합친 비율이다.
   const fitted = attachment.page;
+  const first = !get().lastContext;
   const truncNotice =
-    fitted?.truncated && !get().lastContext
+    fitted?.truncated && first
       ? `본문이 길어 앞부분 ${Math.round((fitted.keptRatio ?? 1) * 100)}%만 참조했습니다.`
       : undefined;
 
-  const notice = staleNotice ?? truncNotice;
+  // 고른 부분이 잘린 경우는 더 크게 어긋난다 — 질문이 가리키는 대상 자체가 반만 갔다.
+  const fittedSelection = attachment.selection;
+  const selectionNotice =
+    fittedSelection?.truncated && first
+      ? `선택한 부분이 길어 앞부분 ${Math.round((fittedSelection.keptRatio ?? 1) * 100)}%만 참조했습니다.`
+      : undefined;
+
+  const notice = staleNotice ?? selectionNotice ?? truncNotice;
 
   try {
     perf = await abortable(streamChat(
@@ -977,7 +1105,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
 
   const abort = get().abort ?? new AbortController();
   const startedAt = Date.now();
-  const { page, screenshot, stale } = freshAttachment(set, get);
+  const { page, screenshot, selection, stale } = freshAttachment(set, get);
 
   // ★ 시스템 프롬프트 · 에이전트 지침 · 현재 탭 안내를 **하나로 합쳐** 넣는다.
   //   나눠 넣으면 도구 호출이 깨지고, 탭을 알려주지 않으면 "어떤 페이지요?"라고
@@ -988,7 +1116,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   const context = buildContext(
     get().messages,
     settings.numCtx,
-    fitAttachment(toAttachment(page, screenshot), settings.numCtx, {
+    fitAttachment(toAttachment(page, screenshot, selection), settings.numCtx, {
       systemPrompt: agentSystem,
       reservedTokens: AGENT_TOOLS_TOKENS,
     }),
