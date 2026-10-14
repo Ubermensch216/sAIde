@@ -217,6 +217,17 @@ it('탭을 전환한 뒤 도착한 이전 탭 선택을 붙이지 않는다', as
   expect(useChat.getState()).toMatchObject({ selection: null, extracting: false });
 });
 
+it('읽기가 진행 중이면 전에 붙은 고른 부분을 돌려주지 않는다', async () => {
+  // 돌려주면 우클릭 "쉽게 설명"이 방금 고른 곳이 아니라 지난번 문단을 설명한다.
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => selectionResponse('지난 문단')) } });
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().attachSelection(1, DEFAULT_SETTINGS);
+  useChat.setState({ extracting: true });
+
+  expect(await useChat.getState().attachSelection(1, DEFAULT_SETTINGS)).toBeNull();
+  expect(useChat.getState().selection?.text).toBe('지난 문단');
+});
+
 it('고른 부분이 없으면 페이지 본문으로 대신하지 않는다', async () => {
   // 고른 적 없는 2,000토큰을 사용자가 프리필 비용으로 무는 일은 없어야 한다.
   const empty: SWToPanel = { type: 'ERROR', error: { code: 'SELECTION_EMPTY', message: '' } };

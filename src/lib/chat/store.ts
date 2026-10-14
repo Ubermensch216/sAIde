@@ -417,7 +417,9 @@ export const useChat = create<ChatState>((set, get) => ({
    *   이 기능의 기본 사용 방식이다.
    */
   async attachSelection(tabId, settings) {
-    if (get().extracting || get().loading) return get().selection;
+    // ★ 읽지 않았으면 null이다. 전에 붙은 고른 부분을 돌려주면 부르는 쪽은 방금 고른
+    //   부분이 붙은 줄 알고, 우클릭 "쉽게 설명"이 지난번 문단을 설명한다.
+    if (get().extracting || get().loading) return null;
     const epoch = ++attachmentEpoch;
     const expectedUrl = get().currentUrl;
 

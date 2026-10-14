@@ -14,6 +14,7 @@ import { FeedbackButtons } from './FeedbackButtons';
 import { loadFeedbackMap } from '@/lib/feedback/store';
 import type { FeedbackVerdict } from '@/lib/feedback/store';
 import { parsePanelLink, type PanelLink } from '@/lib/panel/links';
+import { displayUserText } from '@/lib/prompts/presets';
 
 interface Props {
   messages: UiMessage[];
@@ -114,7 +115,7 @@ function Message({
   if (msg.role === 'user') {
     return (
       <div className="msg msg-user">
-        <div className="bubble">{msg.content}</div>
+        <div className="bubble">{displayUserText(msg.content)}</div>
         <MessageActions msg={msg} deleteDisabled={deleteDisabled} onDelete={onDelete} />
       </div>
     );
@@ -189,7 +190,9 @@ function MessageActions({ msg, deleteDisabled, onDelete }: {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(msg.content);
+      await navigator.clipboard.writeText(
+        msg.role === 'user' ? displayUserText(msg.content) : msg.content,
+      );
       setStatus('copied');
     } catch { setStatus('failed'); }
   };

@@ -8,7 +8,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   ASK_SELECTION_ID,
+  buildPageTranslation,
+  buildSelectionPrompt,
   builtinCommands,
+  displayUserText,
   namesOf,
   customCommands,
   expandCommand,
@@ -90,7 +93,7 @@ describe('expandCommand', () => {
   it('★ 선택형을 대상 없이 부르면 붙어 있는 첨부를 가리킨다', () => {
     const cmd = CMDS.find((c) => c.slash === '/explain')!;
     const page = expandCommand(cmd, '', [], 'page');
-    expect(page).toContain('위 <page_content>의 내용을');
+    expect(page).toContain('이 페이지의 내용을');
     expect(page).toContain('쉽게 설명해줘');
     // 본문은 앞쪽 고정 블록에 있다. 다시 싣지 않는다(캐시 접두사 보호).
     expect(page).not.toContain('<page_content>\n');
@@ -100,11 +103,37 @@ describe('expandCommand', () => {
     expect(sel).not.toContain('<page_content>');
   });
 
+  it('★ 우클릭 메뉴가 공백뿐인 선택을 넘겨도 빈 <page_content>를 보내지 않는다', () => {
+    // 실사용: 페이지를 요약한 뒤 우클릭 "쉽게 설명"을 눌렀더니 크롬이 공백만 넘겨
+    // 빈 블록이 나갔고, 모델이 "제공해주신 텍스트가 비어 있다"고 답했다.
+    const explain = findPreset('explain')!;
+    expect(buildSelectionPrompt(explain, '\n  \n')).toBe('');
+    expect(buildSelectionPrompt(explain, ' \n', 'page')).toContain('이 페이지의 내용을');
+    expect(buildSelectionPrompt(explain, '\n', 'selection')).toContain('내가 고른 부분을');
+    expect(buildSelectionPrompt(explain, '  hello  ')).toContain('<page_content>\nhello\n</page_content>');
+  });
+
+  it('★ 사용자에게 보이는 문구에 <page_content> 태그를 드러내지 않는다', () => {
+    // 실사용: "/explain"을 쳤더니 말풍선에 "위 <page_content>의 내용을"이 그대로 보였다.
+    const explain = findPreset('explain')!;
+    expect(explain.buildAttached!('page')).not.toContain('<page_content>');
+    expect(buildPageTranslation('영어')).not.toContain('<page_content>');
+
+    // 직접 친 대상 텍스트는 모델에게는 태그째 가고, 말풍선에서는 틀만 걷힌다.
+    const sent = buildSelectionPrompt(explain, 'hello world');
+    expect(sent).toContain('<page_content>\nhello world\n</page_content>');
+    expect(displayUserText(sent)).not.toMatch(/<\/?page_content>/);
+    expect(displayUserText(sent)).toContain('hello world');
+
+    // 예전 문구로 저장된 대화
+    expect(displayUserText('위 <page_content>의 내용을 쉽게 설명해줘.')).toBe('이 페이지의 내용을 쉽게 설명해줘.');
+  });
+
   it('선택형에 대상 텍스트가 있으면 첨부보다 그것을 쓴다', () => {
     const cmd = CMDS.find((c) => c.slash === '/polish')!;
     const text = expandCommand(cmd, 'hello world', [], 'page');
     expect(text).toContain('hello world');
-    expect(text).not.toContain('위 <page_content>');
+    expect(text).not.toContain('이 페이지의 내용을');
   });
 
   it('★ 선택 텍스트도 <page_content>로 감싼다 (인젝션 방어)', () => {

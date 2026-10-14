@@ -96,7 +96,7 @@ const TRANSLATE_FALLBACK = '한국어로 번역해줘. 본문이 이미 한국�
 export function buildPageTranslation(lang?: string): string {
   const target = resolveLanguage(lang ?? '');
   return [
-    `위 <page_content>의 내용을 ${target ? `${target}로 번역해줘.` : TRANSLATE_FALLBACK}`,
+    `이 페이지의 내용을 ${target ? `${target}로 번역해줘.` : TRANSLATE_FALLBACK}`,
     '제목부터 시작해 본문 순서대로 옮기고, 문단 구분은 원문 그대로 유지한다.',
     '번역문만 출력한다. 원문을 다시 적거나 요약·설명·감상을 덧붙이지 않는다.',
     '고유명사·인명·수치는 임의로 바꾸지 않는다. 원문에 없는 내용을 채워 넣지 않는다.',
@@ -191,10 +191,23 @@ function wrapSelection(text: string): string {
   return `<page_content>\n${text}\n</page_content>`;
 }
 
+/**
+ * 사용자 말풍선과 복사에 쓸 글자. <page_content> 틀을 걷고 안의 글자만 남긴다.
+ *
+ * ★ 틀은 모델에게 "이건 데이터다"라고 알리는 인젝션 방어라 보내는 글에서는 빼지 않는다.
+ *   하지만 사용자에게는 뜻 없는 코드다. 저장된 원문은 그대로 두고 보여줄 때만 걷는다.
+ */
+export function displayUserText(content: string): string {
+  return content
+    .replace(/<page_content>\n?([\s\S]*?)\n?<\/page_content>/g, '$1')
+    // 예전 프리셋 문구가 태그 이름을 그대로 썼다. 이미 저장된 대화도 같은 말로 보이게 한다.
+    .replace(/위 <page_content>의/g, '이 페이지의');
+}
+
 /** 대상 텍스트 없이 불린 선택형 커맨드가 가리키는 말. 조사까지 포함한다. */
 const ATTACHED_SUBJECT: Record<AttachedTarget, string> = {
   selection: '내가 고른 부분을',
-  page: '위 <page_content>의 내용을',
+  page: '이 페이지의 내용을',
 };
 
 /**
@@ -263,6 +276,25 @@ export const SELECTION_PRESETS: Preset[] = [
  *   같은 id를 나눠 쓰면 우클릭 메뉴가 어느 쪽을 부르는지 읽는 사람마다 달라진다.
  */
 export const ASK_SELECTION_ID = 'ask-selection';
+
+/**
+ * 선택형 프리셋을 대상 텍스트로 펼친다.
+ *
+ * ★ 대상이 공백뿐이면 감싸지 않는다. 빈 <page_content>를 보내면 모델은 앞서 붙은
+ *   본문을 두고도 "텍스트가 비어 있다"고 답한다. 대신 붙어 있는 첨부를 가리키고,
+ *   그것도 없으면 빈 문자열을 돌려준다 — 부르는 쪽이 보내지 않고 안내한다.
+ *
+ * 슬래시(`/explain`)와 우클릭 메뉴가 같은 규칙을 쓰도록 여기 하나로 둔다.
+ */
+export function buildSelectionPrompt(
+  preset: Preset,
+  target: string,
+  attached: AttachedTarget | null = null,
+): string {
+  const text = target.trim();
+  if (text) return preset.build(text);
+  return attached && preset.buildAttached ? preset.buildAttached(attached) : '';
+}
 
 export const ALL_PRESETS = [...PAGE_PRESETS, ...SELECTION_PRESETS];
 
@@ -440,10 +472,7 @@ export function expandCommand(
   if (!preset) return rest;
 
   // 선택 텍스트형은 뒤에 붙은 내용을 대상으로 삼는다. 비었으면 붙어 있는 첨부를 가리킨다.
-  if (preset.needs === 'selection') {
-    if (rest.trim()) return preset.build(rest);
-    return attached && preset.buildAttached ? preset.buildAttached(attached) : '';
-  }
+  if (preset.needs === 'selection') return buildSelectionPrompt(preset, rest, attached);
 
   // 인자를 받는 페이지형(번역의 대상 언어)은 뒤에 덧붙이지 않고 넘겨준다.
   if (preset.takesArg) return preset.build(rest);

@@ -22,6 +22,7 @@ import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protoco
 import type { SWToPanel, TabSummary } from '@/lib/messaging/protocol';
 import {
   ASK_SELECTION_ID,
+  buildSelectionPrompt,
   builtinCommands,
   customCommands,
   expandCommand,
@@ -29,6 +30,7 @@ import {
   PAGE_PRESETS,
   type AttachedTarget,
   type CustomPreset,
+  type Preset,
   type SlashCommand,
 } from '@/lib/prompts/presets';
 import { loadCustomPresets, onCustomPresetsChanged } from '@/lib/storage/presets';
@@ -240,8 +242,8 @@ export default function App() {
   /**
    * 컨텍스트 메뉴에서 온 선택 텍스트 처리.
    *
-   * 'ask'는 사용자가 무엇을 물을지 정해야 하므로 고른 부분을 **첨부로** 붙이고 멈춘다.
-   * 나머지는 바로 보낸다 — 선택 텍스트는 짧아 프리필이 싸다.
+   * 어느 메뉴든 고른 부분을 먼저 **첨부로** 붙인다. 'ask'는 사용자가 무엇을 물을지
+   * 정해야 하므로 거기서 멈추고, 나머지는 붙은 부분을 가리키는 프리셋 문구를 바로 보낸다.
    */
   const handleContextMenu = (presetId: string, selection: string, tabId: number) => {
     if (presetId === ASK_SELECTION_ID) {
@@ -250,32 +252,64 @@ export default function App() {
     }
 
     const preset = findPreset(presetId);
-    if (!preset || !selection) return;
-    void chat.send(preset.build(selection), settingsRef.current);
+    if (!preset) return;
+    void runSelectionPreset(preset, tabId, selection);
   };
 
   /**
-   * 고른 부분을 첨부로 붙인다.
+   * 우클릭 메뉴의 선택형 프리셋(번역·쉽게 설명·다듬기)을 보낸다.
+   *
+   * ★ 메뉴가 준 selectionText를 문구 안에 싣지 않는다. 크롬이 길이를 줄여 넘기므로
+   *   긴 문단을 고르면 뒷부분이 소리 없이 사라졌다. 살아 있는 선택을 읽어 첨부로 붙이고
+   *   ("선택 영역으로 묻기"와 같은 길), 문구는 그 첨부를 가리킨다. 예산을 넘으면
+   *   첨부 블록이 몇 %만 담았는지 모델에게 밝힌다 — 소리 없이 잘리는 일이 없다.
+   *
+   * ★ 크롬은 이미지나 줄바꿈만 걸친 선택에도 메뉴를 띄우고, 그때 고른 글자가 없다.
+   *   예전에는 그 공백을 그대로 감싸 보내, 페이지가 붙어 있는데도 모델이 "제공해주신
+   *   텍스트가 비어 있다"고 답했다. 고른 부분을 붙이지 못하면 이미 붙은 고른 부분 →
+   *   페이지를 가리키고, 아무것도 없으면 보내지 않고 드래그하라고 안내한다.
+   *
+   * ★ 이 함수는 마운트 때 등록한 리스너에서 불린다. 렌더 시점의 `chat`은 낡았으므로
+   *   첨부 상태는 스토어에서 직접 읽는다.
+   */
+  const runSelectionPreset = async (preset: Preset, tabId: number, fallback: string) => {
+    await pickSelection(tabId, fallback);
+    const { selection: picked, page } = useChat.getState();
+    const attached: AttachedTarget | null = picked ? 'selection' : page ? 'page' : null;
+    const text = buildSelectionPrompt(preset, '', attached);
+    if (!text) {
+      chat.setError({ code: 'SELECTION_EMPTY', message: '' });
+      return;
+    }
+    // 고른 부분을 못 읽었어도 대신 가리킬 첨부가 있다. 읽기 실패 배너는 걷는다.
+    chat.clearError();
+    void chat.send(text, settingsRef.current);
+  };
+
+  /**
+   * 고른 부분을 첨부로 붙이고 입력창으로 초점을 옮긴다.
+   */
+  const attachSelectionFor = async (tabId: number, fallback = '') => {
+    if (await pickSelection(tabId, fallback)) setComposerFocus((n) => n + 1);
+  };
+
+  /**
+   * 고른 부분을 첨부로 붙인다. 붙였으면 true.
    *
    * ★ 살아 있는 선택을 페이지에서 직접 읽는 것이 우선이다. 우클릭 메뉴가 주는
    *   글자는 크롬이 길이를 줄여 넘기므로, 긴 문단을 골랐을 때 뒷부분이 사라진다.
    *   읽지 못한 경우(권한 거부·주입 실패)에만 메뉴가 준 글자로 대신한다.
    */
-  const attachSelectionFor = async (tabId: number, fallback = '') => {
+  const pickSelection = async (tabId: number, fallback: string): Promise<boolean> => {
     const settings = settingsRef.current;
     // ★ 우클릭으로 패널이 방금 열렸다면 대화를 불러오는 중이다. 그 사이의 첨부
     //   요청은 스토어가 그대로 되돌려 보내므로, 사용자에게는 메뉴가 먹지 않은 것으로 보인다.
-    await loaded();
-    const attached = await chat.attachSelection(tabId, settings);
-    if (attached) {
-      setComposerFocus((n) => n + 1);
-      return;
-    }
-    if (!fallback.trim()) return;
+    await settled();
+    if (await chat.attachSelection(tabId, settings)) return true;
     // 페이지를 읽지 못했다(권한 거부·주입 실패). 크롬이 넘겨준 글자로 대신한다.
-    chat.attachSelectionText(fallback, settings);
+    if (!chat.attachSelectionText(fallback, settings)) return false;
     chat.clearError();
-    setComposerFocus((n) => n + 1);
+    return true;
   };
 
   /* ── 기억 큐 (Phase 6-1) ──
@@ -1054,12 +1088,17 @@ function EmptyState({
 }
 
 /**
- * 대화 불러오기가 끝날 때까지 기다린다.
+ * 대화 불러오기와 진행 중인 첨부 읽기가 끝날 때까지 기다린다.
  *
- * 기다림이 끝나지 않는 경우(오류로 loading이 남는 경우)까지 붙들지 않도록 상한을 둔다.
+ * ★ 읽기가 진행 중이면 스토어는 새 첨부 요청을 받지 않는다. 그 사이에 우클릭 메뉴를
+ *   누르면 고른 부분이 붙지 않고, 메뉴가 준 글자로 대신 붙이면 진행 중이던 페이지
+ *   읽기가 무효가 된다. 끝나기를 기다리는 쪽이 둘 다 지킨다.
+ *
+ * 기다림이 끝나지 않는 경우(오류로 상태가 남는 경우)까지 붙들지 않도록 상한을 둔다.
  */
-function loaded(timeoutMs = 3000): Promise<void> {
-  if (!useChat.getState().loading) return Promise.resolve();
+function settled(timeoutMs = 10_000): Promise<void> {
+  const busy = (s: { loading: boolean; extracting: boolean }) => s.loading || s.extracting;
+  if (!busy(useChat.getState())) return Promise.resolve();
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(timer);
@@ -1068,7 +1107,7 @@ function loaded(timeoutMs = 3000): Promise<void> {
     };
     const timer = setTimeout(done, timeoutMs);
     const unsubscribe = useChat.subscribe((state) => {
-      if (!state.loading) done();
+      if (!busy(state)) done();
     });
   });
 }
