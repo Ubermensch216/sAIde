@@ -80,6 +80,33 @@ describe('expandCommand', () => {
     expect(text).toContain('hello world');
   });
 
+  it('★ 선택형을 대상 없이 부르면 빈 <page_content>를 보내지 않는다', () => {
+    // 실사용: 페이지가 붙은 채 /explain만 쳤더니 빈 블록이 나가 "텍스트가 없다"는 답이 왔다.
+    const cmd = CMDS.find((c) => c.slash === '/explain')!;
+    expect(expandCommand(cmd, '', [])).toBe('');
+    expect(expandCommand(cmd, '   ', [])).toBe('');
+  });
+
+  it('★ 선택형을 대상 없이 부르면 붙어 있는 첨부를 가리킨다', () => {
+    const cmd = CMDS.find((c) => c.slash === '/explain')!;
+    const page = expandCommand(cmd, '', [], 'page');
+    expect(page).toContain('위 <page_content>의 내용을');
+    expect(page).toContain('쉽게 설명해줘');
+    // 본문은 앞쪽 고정 블록에 있다. 다시 싣지 않는다(캐시 접두사 보호).
+    expect(page).not.toContain('<page_content>\n');
+
+    const sel = expandCommand(cmd, '', [], 'selection');
+    expect(sel).toContain('내가 고른 부분을');
+    expect(sel).not.toContain('<page_content>');
+  });
+
+  it('선택형에 대상 텍스트가 있으면 첨부보다 그것을 쓴다', () => {
+    const cmd = CMDS.find((c) => c.slash === '/polish')!;
+    const text = expandCommand(cmd, 'hello world', [], 'page');
+    expect(text).toContain('hello world');
+    expect(text).not.toContain('위 <page_content>');
+  });
+
   it('★ 선택 텍스트도 <page_content>로 감싼다 (인젝션 방어)', () => {
     // 선택 텍스트도 출처는 웹페이지다. 데이터로 표시해야 한다.
     for (const p of SELECTION_PRESETS) {

@@ -29,7 +29,15 @@ export interface Preset {
   takesArg?: boolean;
   /** 사용자 메시지로 보낼 문구를 만든다 */
   build: (selection?: string) => string;
+  /**
+   * 선택형 프리셋을 대상 텍스트 없이 불렀을 때, 이미 붙어 있는 첨부를 가리키는 문구.
+   * 첨부는 컨텍스트 앞쪽 블록에 들어 있으므로 여기서 다시 싣지 않는다.
+   */
+  buildAttached?: (target: AttachedTarget) => string;
 }
+
+/** 선택형 커맨드가 대상 텍스트 대신 가리킬 첨부 */
+export type AttachedTarget = 'selection' | 'page';
 
 /* ── 번역 대상 언어 ────────────────────────────────────── */
 
@@ -183,8 +191,37 @@ function wrapSelection(text: string): string {
   return `<page_content>\n${text}\n</page_content>`;
 }
 
+/** 대상 텍스트 없이 불린 선택형 커맨드가 가리키는 말. 조사까지 포함한다. */
+const ATTACHED_SUBJECT: Record<AttachedTarget, string> = {
+  selection: '내가 고른 부분을',
+  page: '위 <page_content>의 내용을',
+};
+
+/**
+ * 선택형 프리셋을 지시문 하나로 만든다.
+ *
+ * ★ `/explain`만 치고 Enter를 누르면 대상 텍스트가 비어 있다. 예전에는 빈 문자열을
+ *   그대로 감싸 보내 모델이 "설명할 텍스트가 없다"고 답했다. 붙어 있는 페이지가
+ *   있어도 그랬다. 대상이 비면 buildAttached로 이미 붙은 첨부를 가리킨다.
+ */
+function selectionPreset(
+  p: Omit<Preset, 'build' | 'buildAttached' | 'needs'> & {
+    /** 대상 텍스트를 직접 감쌀 때의 주어 */
+    subject: string;
+    instruct: (subject: string) => string;
+  },
+): Preset {
+  const { subject, instruct, ...rest } = p;
+  return {
+    ...rest,
+    needs: 'selection',
+    build: (s = '') => `${instruct(subject)}\n\n${wrapSelection(s)}`,
+    buildAttached: (target) => instruct(ATTACHED_SUBJECT[target]),
+  };
+}
+
 export const SELECTION_PRESETS: Preset[] = [
-  {
+  selectionPreset({
     /**
      * ★ 슬래시가 없다. `/translate`는 페이지 번역이 가져갔다.
      *   선택 텍스트 번역의 진입점은 우클릭 메뉴(background.ts의 saide.translate)이고,
@@ -194,28 +231,25 @@ export const SELECTION_PRESETS: Preset[] = [
     id: 'translate',
     label: '번역',
     hint: '선택한 텍스트를 한↔영으로',
-    needs: 'selection',
-    build: (s = '') =>
-      `다음 텍스트를 한국어로 자연스럽게 번역해줘. 이미 한국어면 영어로 번역해줘.\n\n${wrapSelection(s)}`,
-  },
-  {
+    subject: '다음 텍스트를',
+    instruct: (s) => `${s} 한국어로 자연스럽게 번역해줘. 이미 한국어면 영어로 번역해줘.`,
+  }),
+  selectionPreset({
     id: 'explain',
     label: '쉽게 설명',
     slash: '/explain',
     hint: '처음 보는 사람도 알아듣게',
-    needs: 'selection',
-    build: (s = '') =>
-      `다음 텍스트를 처음 접하는 사람도 이해할 수 있게 쉽게 설명해줘.\n\n${wrapSelection(s)}`,
-  },
-  {
+    subject: '다음 텍스트를',
+    instruct: (s) => `${s} 처음 접하는 사람도 이해할 수 있게 쉽게 설명해줘.`,
+  }),
+  selectionPreset({
     id: 'polish',
     label: '문장 다듬기',
     slash: '/polish',
     hint: '뜻은 그대로, 더 자연스럽게',
-    needs: 'selection',
-    build: (s = '') =>
-      `다음 문장을 뜻은 그대로 두고 더 자연스럽게 다듬어줘. 다듬은 결과만 보여줘.\n\n${wrapSelection(s)}`,
-  },
+    subject: '다음 문장을',
+    instruct: (s) => `${s} 뜻은 그대로 두고 더 자연스럽게 다듬어줘. 다듬은 결과만 보여줘.`,
+  }),
 ];
 
 /**
@@ -380,11 +414,17 @@ export function resolveTyped(
   return null;
 }
 
-/** 슬래시 커맨드를 실제 프롬프트로 바꾼다. */
+/**
+ * 슬래시 커맨드를 실제 프롬프트로 바꾼다.
+ *
+ * @param attached 선택형 커맨드 뒤에 대상 텍스트가 없을 때 대신 가리킬 첨부.
+ *   없으면 빈 문자열을 돌려준다 — 빈 <page_content>를 보내 모델이 되묻게 두지 않는다.
+ */
 export function expandCommand(
   cmd: SlashCommand,
   rest: string,
   customs: CustomPreset[],
+  attached: AttachedTarget | null = null,
 ): string {
   if (cmd.custom) {
     const c = customs.find((x) => x.id === cmd.presetId);
@@ -399,8 +439,11 @@ export function expandCommand(
   const preset = findPreset(cmd.presetId);
   if (!preset) return rest;
 
-  // 선택 텍스트형은 뒤에 붙은 내용을 대상으로 삼는다.
-  if (preset.needs === 'selection') return preset.build(rest);
+  // 선택 텍스트형은 뒤에 붙은 내용을 대상으로 삼는다. 비었으면 붙어 있는 첨부를 가리킨다.
+  if (preset.needs === 'selection') {
+    if (rest.trim()) return preset.build(rest);
+    return attached && preset.buildAttached ? preset.buildAttached(attached) : '';
+  }
 
   // 인자를 받는 페이지형(번역의 대상 언어)은 뒤에 덧붙이지 않고 넘겨준다.
   if (preset.takesArg) return preset.build(rest);

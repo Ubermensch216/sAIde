@@ -27,6 +27,7 @@ import {
   expandCommand,
   findPreset,
   PAGE_PRESETS,
+  type AttachedTarget,
   type CustomPreset,
   type SlashCommand,
 } from '@/lib/prompts/presets';
@@ -545,7 +546,21 @@ export default function App() {
       return;
     }
 
-    const text = expandCommand(cmd, rest, customs);
+    // ★ `/explain`만 치면 대상 텍스트가 없다. 고른 부분 → 페이지 순으로 붙은 첨부를
+    //   대상으로 삼고, 아무것도 없으면 페이지를 붙인다. 빈 대상을 보내면 모델이
+    //   "설명할 텍스트가 없다"고만 답한다.
+    let attached: AttachedTarget | null = null;
+    if (cmd.needs === 'selection' && !cmd.custom && !rest.trim()) {
+      if (chat.selection) attached = 'selection';
+      else if (chat.page) attached = 'page';
+      else {
+        if (!tab || !(await ensureAccess(tab.url))) return;
+        if (!(await chat.attachPage(tab.tabId, settings))) return;
+        attached = 'page';
+      }
+    }
+
+    const text = expandCommand(cmd, rest, customs, attached);
     if (text.trim()) void chat.send(text, settings);
   };
 
