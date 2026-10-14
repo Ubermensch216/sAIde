@@ -17,27 +17,76 @@
  * 단, GPU 이전 시 되살릴 수 있도록 예산은 설정값으로 노출한다.
  */
 
-/** 실측: 한국어 5,960자 → 3,182 tok ≈ 1.87자/토큰. 안전하게 2.0으로 잡는다. */
-export const CHARS_PER_TOKEN_KO = 2.0;
-export const CHARS_PER_TOKEN_EN = 4.0;
-
-const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/g;
-
 /**
- * 한글 비중으로 자·토큰 비율을 보간한다.
- * 정확한 Gemma 토크나이저를 번들하는 비용(수 MB)에 비해 이 근사로 충분하다 —
- * 예산은 어차피 안전 마진을 둔 값이기 때문이다.
+ * 글자 종류별 토큰 비용. gemma4:e2b 토크나이저로 실측해 맞춘 값이다.
+ *
+ * ★ 예전에는 "한국어 2.0자/토큰, 영문 4.0자/토큰"을 한글 비중으로 보간했다.
+ *   실제 뉴스 기사(2026-10-14, 네이버 뉴스 본문 추출본)에서 추정 1,420토큰이
+ *   실측 3,616토큰이었다 — 2.5배 과소추정. 원인은 둘이다.
+ *     ① 한글 산문이 1.41자/토큰이다(2.0이 아니다).
+ *     ② 공백·줄바꿈·숫자·문장부호가 거의 한 글자에 한 토큰인데, 한글이 아니라는
+ *        이유로 영문과 같은 4자/토큰을 매겼다. Readability 결과는 "\n \n \n" 같은
+ *        빈 줄이 글자의 45%를 차지했다.
+ *   과소추정된 본문은 num_ctx를 넘고, Ollama는 **오류 없이 본문 메시지를 통째로
+ *   버린다**(시스템 프롬프트와 질문만 남아 202토큰). 모델은 "페이지 내용이 제공되지
+ *   않았다"고 답하고, 사용자는 본문이 붙어 있는 화면을 보며 그 답을 읽는다.
+ *
+ * 실측(700자 표본 12개 + 영문·숫자·코드 표본, 오차 ±5%):
+ *   한글 0.63, 숫자 1.07, 공백류 0.97, 기타 0.83, 라틴 문자 ≈0
+ *   — 영단어는 앞 공백과 합쳐 한 토큰이 되므로 비용이 공백 쪽에 잡힌다.
+ *   아래 값은 그보다 조금 보수적으로 올렸다. 모델을 바꾸면 다시 재야 한다.
  */
-export function estimateCharsPerToken(text: string): number {
-  if (!text) return CHARS_PER_TOKEN_EN;
-  const hangul = text.match(HANGUL)?.length ?? 0;
-  const ratio = hangul / text.length;
-  return CHARS_PER_TOKEN_KO * ratio + CHARS_PER_TOKEN_EN * (1 - ratio);
-}
+const TOKEN_COST = {
+  hangul: 0.66,
+  latin: 0.05,
+  digit: 1.1,
+  space: 1.0,
+  /** 문장부호·기호 등 ASCII 나머지 */
+  ascii: 0.85,
+  /** 한자·가나·이모지 등. 바이트 단위로 쪼개지는 경우가 있어 높게 잡는다. */
+  other: 1.2,
+} as const;
+
+/** 가장 싼 글자도 이보다 싸게 치지 않는다. 라틴 문자만 길게 이어진 URL·해시 대비. */
+const MIN_TOKENS_PER_CHAR = 0.22;
 
 export function estimateTokens(text: string): number {
   if (!text) return 0;
-  return Math.ceil(text.length / estimateCharsPerToken(text));
+  let cost = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    if ((c >= 0xac00 && c <= 0xd7a3) || (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f)) cost += TOKEN_COST.hangul;
+    else if ((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)) cost += TOKEN_COST.latin;
+    else if (c >= 0x30 && c <= 0x39) cost += TOKEN_COST.digit;
+    else if (c === 0x20 || (c >= 0x09 && c <= 0x0d) || c === 0xa0) cost += TOKEN_COST.space;
+    else if (c < 0x80) cost += TOKEN_COST.ascii;
+    else cost += TOKEN_COST.other;
+  }
+  return Math.ceil(Math.max(cost, text.length * MIN_TOKENS_PER_CHAR));
+}
+
+/** 이 글의 평균 자·토큰 비율. 예산을 글자 수로 바꿀 때 쓴다. */
+export function estimateCharsPerToken(text: string): number {
+  if (!text) return 4.0;
+  return text.length / Math.max(1, estimateTokens(text));
+}
+
+/**
+ * 추출한 본문의 공백을 정리한다.
+ *
+ * ★ 공백류는 거의 한 글자에 한 토큰이다(위 TOKEN_COST). Readability 결과에는
+ *   "\n \n \n", 탭 들여쓰기가 흔해 실측 기사에서 이것만 정리해도 3,524 → 2,287
+ *   토큰(-35%)이 됐다. 모델이 볼 내용은 한 글자도 줄지 않는다.
+ */
+export function normalizeWhitespace(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[^\S\n]+/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export interface BudgetResult {
@@ -61,29 +110,31 @@ export function fitToBudget(text: string, budgetTokens: number): BudgetResult {
     return { text: '', truncated: false, keptRatio: 1, estimatedTokens: 0 };
   }
 
-  const ratio = estimateCharsPerToken(clean);
-  const maxChars = Math.floor(budgetTokens * ratio);
-
-  if (clean.length <= maxChars) {
-    return {
-      text: clean,
-      truncated: false,
-      keptRatio: 1,
-      estimatedTokens: estimateTokens(clean),
-    };
+  const total = estimateTokens(clean);
+  if (total <= budgetTokens) {
+    return { text: clean, truncated: false, keptRatio: 1, estimatedTokens: total };
   }
 
-  const cut = clean.slice(0, maxChars);
-  const boundary = Math.max(
-    cut.lastIndexOf('\n\n'),
-    cut.lastIndexOf('다. '),
-    cut.lastIndexOf('. '),
-    cut.lastIndexOf('요. '),
-  );
-  const finalText = boundary > maxChars * 0.6 ? cut.slice(0, boundary + 1) : cut;
+  // ★ 평균 비율로 한 번에 자르면 앞쪽이 촘촘한 글(메뉴·날짜가 몰린 기사 머리)에서
+  //   예산을 넘긴다. 잘라 본 조각을 다시 재며 줄인다.
+  let maxChars = Math.floor(budgetTokens * estimateCharsPerToken(clean));
+  let finalText = '';
+  for (let i = 0; i < 8; i++) {
+    const cut = clean.slice(0, maxChars);
+    const boundary = Math.max(
+      cut.lastIndexOf('\n\n'),
+      cut.lastIndexOf('다. '),
+      cut.lastIndexOf('. '),
+      cut.lastIndexOf('요. '),
+    );
+    finalText = (boundary > maxChars * 0.6 ? cut.slice(0, boundary + 1) : cut).trim();
+    const cost = estimateTokens(finalText);
+    if (cost <= budgetTokens || maxChars <= 1) break;
+    maxChars = Math.max(1, Math.floor(maxChars * (budgetTokens / cost) * 0.98));
+  }
 
   return {
-    text: finalText.trim(),
+    text: finalText,
     truncated: true,
     keptRatio: finalText.length / clean.length,
     estimatedTokens: estimateTokens(finalText),

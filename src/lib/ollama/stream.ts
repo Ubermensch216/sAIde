@@ -110,6 +110,8 @@ async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHand
   const body: ChatRequest = {
     think: false,
     keep_alive: '10m',
+    // ★ 넘치면 조용히 본문을 버리지 말고 실패하게 한다. 근거는 ChatRequest.truncate.
+    truncate: false,
     ...req,
     stream: true,
   };

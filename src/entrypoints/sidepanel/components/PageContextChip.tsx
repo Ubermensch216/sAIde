@@ -15,6 +15,8 @@ interface Props {
 }
 
 const METHOD_KEY = {
+  // 사용자에게는 둘 다 "본문"이다. 어떤 경로로 골랐는지는 알 필요가 없다.
+  site: 'page.method.readability',
   readability: 'page.method.readability',
   innerText: 'page.method.innerText',
   'youtube-caption': 'page.method.youtube',

@@ -194,6 +194,49 @@ let viewEpoch = 0;
 let operationEpoch = 0;
 let attachmentEpoch = 0;
 
+/**
+ * 다른 탭을 보는 동안 맡겨 둔 첨부물. 탭 id별로 하나다.
+ *
+ * ★ 대화 이력은 DB에서 다시 읽지만 첨부물은 메모리에만 있다. 맡겨 두지 않으면
+ *   요약을 기다리다 다른 탭을 잠깐 보고 돌아온 사용자는 질문은 그대로인데 본문이
+ *   빠진 대화를 받는다. 그 상태로 "다시 생성"을 누르면 질문만 나가(실측 202토큰)
+ *   모델이 "페이지 내용이 제공되지 않았다"고 답한다.
+ *
+ * ★ 같은 문서로 돌아왔을 때만 되돌린다. 그 탭에서 다른 글로 넘어갔다면 지난 본문이다.
+ */
+interface ParkedAttachments {
+  url: string;
+  page: ExtractedPage | null;
+  screenshot: string | null;
+  selection: ExtractedPage | null;
+}
+const parked = new Map<number, ParkedAttachments>();
+/** 본문은 탭마다 수천 자다. 탭을 많이 오가도 메모리가 자라지 않게 최근 것만 둔다. */
+const MAX_PARKED = 8;
+
+function parkAttachments(state: ChatState): void {
+  const tabId = state.conversation?.tabId ?? state.pending?.tabId;
+  if (tabId === undefined) return;
+  parked.delete(tabId);
+  const { page, screenshot, selection, currentUrl } = state;
+  if (!currentUrl || (!page && !screenshot && !selection)) return;
+  // 화면이 이미 바뀐 첨부는 맡기지 않는다. 돌아와서 되살리면 지난 본문으로 답하게 된다.
+  if (page && state.screenChangedAt > page.extractedAt) return;
+  if (selection && state.screenChangedAt > selection.extractedAt) return;
+  parked.set(tabId, { url: currentUrl, page, screenshot, selection });
+  while (parked.size > MAX_PARKED) parked.delete(parked.keys().next().value!);
+}
+
+function unparkAttachments(
+  tabId: number,
+  url: string,
+): Pick<ChatState, 'page' | 'screenshot' | 'selection'> | Record<string, never> {
+  const p = parked.get(tabId);
+  parked.delete(tabId);
+  if (!p || !sameDocument(p.url, url)) return {};
+  return { page: p.page, screenshot: p.screenshot, selection: p.selection };
+}
+
 export const useChat = create<ChatState>((set, get) => ({
   conversation: null,
   loading: false,
@@ -220,14 +263,18 @@ export const useChat = create<ChatState>((set, get) => ({
   /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
   async openForTab(tabId, url) {
     get().stop();
+    parkAttachments(get());
     const epoch = ++viewEpoch;
     ++attachmentEpoch;
     set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, selection: null, currentUrl: url, error: null, lastContext: null, agentSteps: [], contextFrom: 0, screenChangedAt: 0 });
     try {
-      const conversation = await findForTab(tabId, url);
-      const messages = conversation ? await listMessages(conversation.id) : [];
+      const found = await findForTab(tabId, url);
+      const messages = found ? await listMessages(found.id) : [];
+      // ★ 메시지가 하나도 없는 대화는 이어받지 않는다. 패널을 열 때 도는 빈 대화 청소가
+      //   바로 그 레코드를 지우므로, 붙들면 지워진 대화를 들고 있게 된다. 다음 메시지에서 새로 만든다.
+      const conversation = messages.length ? found : null;
       if (epoch === viewEpoch) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false,
-        contextFrom: conversation?.contextFrom ?? 0 });
+        contextFrom: conversation?.contextFrom ?? 0, ...unparkAttachments(tabId, url) });
     } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
   },
   async openConversation(conversation) {
@@ -597,6 +644,11 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
  * ★ 대화가 DB에 생기는 지점은 여기 한 곳뿐이다.
  *   패널이 열릴 때가 아니라 **첫 메시지를 보낼 때** 만들어야 빈 대화방이
  *   쌓이지 않는다. 제목도 이때 함께 정해 별도 갱신 쿼리를 아낀다.
+ *
+ * ★ 들고 있는 대화가 아직 DB에 있는지 확인한다. 화면의 대화는 다른 곳에서 지워질
+ *   수 있다 — 패널을 열 때 도는 빈 대화 청소, 다른 창의 패널, 대화 목록의 삭제.
+ *   확인하지 않으면 "삭제된 대화에는 메시지를 저장할 수 없습니다"로 전송이 막히고,
+ *   대화를 비우기 전에는 빠져나갈 길이 없다. 지워졌으면 같은 탭·주소로 새로 만든다.
  */
 async function ensureConversation(
   set: Set,
@@ -605,7 +657,11 @@ async function ensureConversation(
   owns: () => boolean,
 ): Promise<Conversation | null> {
   const existing = get().conversation;
-  if (existing) return existing;
+  if (existing) {
+    if (await db.conversations.get(existing.id)) return existing;
+    if (!owns()) return null;
+    set({ conversation: null, pending: { tabId: existing.tabId, url: existing.originUrl } });
+  }
 
   const p = get().pending;
   if (!p) return null;

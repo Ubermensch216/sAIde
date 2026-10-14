@@ -65,6 +65,98 @@ it('탭을 전환한 뒤 도착한 이전 탭 캡처를 붙이지 않는다', as
   expect(useChat.getState()).toMatchObject({ screenshot: null, extracting: false });
 });
 
+/** 본문 응답 한 건. */
+function pageResponse(text: string, url = 'https://a.test'): SWToPanel {
+  return {
+    type: 'PAGE_EXTRACTED',
+    payload: {
+      url, title: '기사', text, charCount: text.length, truncated: false, keptRatio: 1,
+      estimatedTokens: text.length, method: 'readability', extractedAt: Date.now(),
+    },
+  };
+}
+
+it('다른 탭을 보고 돌아와도 붙여 둔 본문이 남아 다시 생성에 들어간다', async () => {
+  // 실제 증상: 요약을 기다리는 동안 다른 탭을 잠깐 보고 돌아와 "다시 생성"을 누르자
+  // 본문 없이 질문만 나가(202토큰) 모델이 "페이지 내용이 제공되지 않았다"고 답했다.
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => pageResponse('춘천시 가훈 써주기 행사 기사 본문')) } });
+  const requests: string[] = [];
+  const started = deferred<void>();
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers, signal) => {
+    requests.push(request.messages.map(m => m.content).join('\n'));
+    handlers.onToken?.('부분 답');
+    started.resolve();
+    // 실제 스트림처럼 중단 신호에 끝난다.
+    await new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  const sending = useChat.getState().send('이 페이지의 내용을 요약해줘.', DEFAULT_SETTINGS);
+  await started.promise;
+
+  await useChat.getState().openForTab(2, 'https://b.test');
+  await sending;
+  await useChat.getState().openForTab(1, 'https://a.test');
+  expect(useChat.getState().page?.text).toBe('춘천시 가훈 써주기 행사 기사 본문');
+
+  vi.mocked(stream.streamChat).mockImplementation(async (_endpoint, request) => {
+    requests.push(request.messages.map(m => m.content).join('\n'));
+    return null;
+  });
+  // 중단된 부분 답이 늦게 저장될 수 있다. 화면에 다시 불러온 뒤 재생성한다.
+  await vi.waitFor(async () => expect(await storage.db.messages.count()).toBe(2));
+  await useChat.getState().openForTab(2, 'https://b.test');
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().regenerate(DEFAULT_SETTINGS);
+
+  const last = requests.at(-1)!;
+  expect(last).toContain('<page_content>');
+  expect(last).toContain('춘천시 가훈 써주기 행사 기사 본문');
+  expect(last).toContain('이 페이지의 내용을 요약해줘.');
+});
+
+it('같은 탭이라도 다른 문서로 바뀌었으면 지난 본문을 되살리지 않는다', async () => {
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => pageResponse('기사 A 본문', 'https://a.test/article/1')) } });
+  await useChat.getState().openForTab(1, 'https://a.test/article/1');
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  await useChat.getState().openForTab(2, 'https://b.test');
+  await useChat.getState().openForTab(1, 'https://a.test/article/2');
+  expect(useChat.getState().page).toBeNull();
+});
+
+it('패널을 열 때 빈 대화 청소와 겹쳐도 전송이 막히지 않는다', async () => {
+  // 실제 증상: 메시지를 모두 지운 대화가 남은 탭에서 패널을 열자, 대화 복원과 빈 대화 청소가
+  // 동시에 돌았다. 복원이 붙든 대화를 청소가 지웠고, 요약을 누르자 "삭제된 대화에는
+  // 메시지를 저장할 수 없습니다"로 막혔다.
+  vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
+  await storage.createConversation(1, 'https://a.test', '비워진 대화');
+  await Promise.all([useChat.getState().openForTab(1, 'https://a.test'), storage.pruneEmptyConversations()]);
+
+  await useChat.getState().send('요약해줘', DEFAULT_SETTINGS);
+
+  expect(useChat.getState().error).toBeNull();
+  expect((await storage.db.messages.toArray()).filter(m => m.role === 'user').map(m => m.content)).toEqual(['요약해줘']);
+});
+
+it('들고 있던 대화가 다른 곳에서 지워졌으면 새 대화로 이어 쓴다', async () => {
+  vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('첫 질문', DEFAULT_SETTINGS);
+  const old = useChat.getState().conversation!;
+  // 다른 창의 패널이나 대화 목록에서 지운 경우
+  await storage.deleteConversation(old.id);
+
+  await useChat.getState().send('다음 질문', DEFAULT_SETTINGS);
+
+  const now = useChat.getState().conversation!;
+  expect(useChat.getState().error).toBeNull();
+  expect(now.id).not.toBe(old.id);
+  expect(now).toMatchObject({ tabId: 1, originUrl: 'https://a.test' });
+  expect((await storage.db.messages.toArray()).filter(m => m.role === 'user').map(m => m.content)).toEqual(['다음 질문']);
+});
+
 it('삭제한 대화에 메시지를 쓰면 실패하고 고아 메시지를 만들지 않는다', async () => {
   const id = await storage.createConversation(1, 'https://a.test');
   await storage.deleteConversation(id);

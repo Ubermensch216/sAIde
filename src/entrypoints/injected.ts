@@ -15,8 +15,8 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
  * background가 허용된 사이트 권한으로 executeScript 할 때만 실제로 주입된다.
  */
 
-import { Readability } from '@mozilla/readability';
-import { fitToBudget } from '@/lib/extract/budget';
+import { extractArticle, LOOSE_CHAR_THRESHOLD } from '@/lib/extract/article';
+import { fitToBudget, normalizeWhitespace } from '@/lib/extract/budget';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import { collectDocumentText } from '@/lib/extract/document-text';
 import { readSelection } from '@/lib/extract/selection';
@@ -121,15 +121,12 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
     }
   }
 
-  // ② 리더 모드
+  // ② 구조를 아는 사이트의 본문 요소 → 리더 모드 (lib/extract/article.ts)
   if (!raw) {
-    try {
-      // Readability는 문서를 파괴적으로 수정하므로 반드시 복제본에 돌린다.
-      const clone = document.cloneNode(true) as Document;
-      const article = new Readability(clone).parse();
-      raw = article?.textContent?.trim() ?? '';
-    } catch {
-      raw = '';
+    const article = extractArticle(document, location.href);
+    if (article) {
+      raw = article.text.trim();
+      method = article.method;
     }
   }
 
@@ -138,12 +135,17 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
   // ★ body.innerText만 보지 않는다. 본문을 같은 출처 iframe에 담거나 읽기 전용
   //   편집기(textarea)에 넣어 두는 화면이 있는데, 둘 다 innerText에 나타나지 않는다.
   //   리더 모드가 이미 실패한 자리라 여기서도 비면 사용자는 "읽을 내용이 없다"만 본다.
-  if (raw.length < 200) {
+  //
+  // ★ 짧은 기사를 짧다는 이유로 페이지 전체로 갈아치우지 않는다. 그러면 article.ts가
+  //   걷어낸 메뉴·관련 기사 목록이 이 길로 되돌아온다. 사이트 규칙은 본문 요소를 이미
+  //   확인했고, 리더 모드는 article.ts가 받아들인 문턱까지만 믿는다.
+  const minChars = method === 'site' ? 1 : method === 'readability' ? LOOSE_CHAR_THRESHOLD : 200;
+  if (raw.length < minChars) {
     raw = collectDocumentText();
     method = 'innerText';
   }
 
-  const normalized = raw.replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ');
+  const normalized = normalizeWhitespace(raw);
   const budgeted = fitToBudget(normalized, budgetTokens);
 
   return {

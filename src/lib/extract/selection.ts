@@ -17,6 +17,8 @@
  *   본문을 넣어 두는 화면이 있어, textarea·input은 따로 본다.
  */
 
+import { normalizeWhitespace } from './budget';
+
 const MAX_FRAME_DEPTH = 4;
 
 /** 선택된 텍스트. 없으면 빈 문자열. */
@@ -73,5 +75,5 @@ function textField(el: Element | null): HTMLTextAreaElement | HTMLInputElement |
 
 /** 본문 추출과 같은 정규화. 모델에 들어가는 형태를 한 가지로 맞춘다. */
 function normalize(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+  return normalizeWhitespace(text);
 }

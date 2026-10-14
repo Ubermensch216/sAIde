@@ -76,6 +76,14 @@ export async function classifyResponse(res: Response): Promise<OllamaError> {
       detail || undefined,
     );
   }
+  // truncate:false 요청이 num_ctx를 넘었다. 추정이 빗나간 경우라 사용자가 고를 수 있는 길을 알린다.
+  if (/exceeds the available context size/i.test(detail)) {
+    return new OllamaError(
+      'UNKNOWN',
+      '본문과 질문이 모델의 컨텍스트 크기를 넘어 보내지 못했습니다.',
+      '설정에서 컨텍스트 크기(num_ctx)를 늘리거나 본문 예산을 줄이세요. 필요한 부분만 드래그해 "선택 영역 붙이기"로 물어도 됩니다.',
+    );
+  }
   if (/memory|oom|allocat/i.test(detail)) {
     return new OllamaError(
       'OOM',

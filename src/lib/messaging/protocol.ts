@@ -59,6 +59,8 @@ export interface AppError {
 /* ── 페이지 추출 결과 ──────────────────────────────────── */
 
 export type ExtractMethod =
+  /** 구조를 아는 사이트(네이버 뉴스 등)의 본문 요소를 직접 읽었다. lib/extract/article.ts */
+  | 'site'
   | 'readability'
   | 'innerText'
   | 'youtube-caption'

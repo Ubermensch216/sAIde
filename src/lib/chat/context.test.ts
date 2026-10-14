@@ -397,7 +397,8 @@ describe('uncachedPrefillSeconds', () => {
 describe('estimatePrefillSeconds', () => {
   it('실측 처리량으로 대기시간을 환산한다', () => {
     // 약 2,000토큰 → 131 tok/s에서 약 15초
-    const msgs = [sys(''), turn('user', '바'.repeat(5000))];
+    // gemma4 실측 한글 0.66토큰/자 기준 3,000자 ≈ 2,000토큰
+    const msgs = [sys(''), turn('user', '바'.repeat(3000))];
     const sec = estimatePrefillSeconds(msgs, 131);
     expect(sec).toBeGreaterThan(12);
     expect(sec).toBeLessThan(20);

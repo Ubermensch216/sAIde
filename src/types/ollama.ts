@@ -78,6 +78,13 @@ export interface ChatRequest {
   tools?: ToolSchema[];
   /** 구조화 출력용 JSON 스키마. 소형 모델의 형식 이탈을 막는다(핵심·조치사항 카드). */
   format?: Record<string, unknown>;
+  /**
+   * ★ 기본 false로 보낸다(stream.ts). Ollama의 기본값은 true인데, 그러면 num_ctx를
+   *   넘는 요청에서 **오류 없이** 앞쪽 메시지를 버린다. 페이지 본문이 그 자리에 있어
+   *   모델은 본문 없이 질문만 받고 "페이지 내용이 제공되지 않았다"고 답했다.
+   *   false면 HTTP 400으로 실패하고, 사용자는 왜 답이 없는지 안다.
+   */
+  truncate?: boolean;
   options?: ChatOptions;
 }
 
