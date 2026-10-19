@@ -35,6 +35,7 @@ import {
 } from '@/lib/prompts/presets';
 import { loadCustomPresets, onCustomPresetsChanged } from '@/lib/storage/presets';
 import { detectPageKind, kindHint, suggestedOrder } from '@/lib/extract/pagetype';
+import { refersToCurrentPage } from '@/lib/prompts/page-reference';
 import { requestAllUrls, requestCaptureAccess, requestHostAccess } from '@/lib/permissions';
 import { estimateTtfbSeconds } from '@/lib/storage/settings';
 import {
@@ -466,6 +467,34 @@ export default function App() {
     await chat.sendAgent(text, settings, tab);
   };
 
+  /**
+   * 입력창에서 직접 보낸 문장 전송.
+   *
+   * ★ 이 확장은 본문을 상시로 읽지 않으므로, 첨부 없이 "이 페이지의 내용을 설명해줘"를
+   *   보내면 모델은 어느 페이지인지 몰라 되묻는다(읽기 실패가 아니라 읽지 않은 것).
+   *   문장이 현재 페이지를 가리키는데 붙은 것이 하나도 없으면 먼저 본문을 붙인다.
+   *   붙이지 못하면(권한 거부·읽기 실패) 보내지 않는다 — 이유는 배너가 알린다.
+   *
+   * ★ 권한 요청이 첫 동작이어야 한다(ensureAccess 주석). 판정은 동기라 제스처가 남는다.
+   */
+  const sendTyped = async (text: string) => {
+    const { page, selection, screenshot } = useChat.getState();
+    const needsPage =
+      !agentMode && canReadPage && !page && !selection && !screenshot && refersToCurrentPage(text);
+    if (needsPage && tab) {
+      if (!(await ensureAccess(tab.url))) {
+        setDraft(text);
+        return;
+      }
+      if (!(await chat.attachPage(tab.tabId, settings))) {
+        setDraft(text);
+        return;
+      }
+    }
+    if (agentMode) void startAgent(text);
+    else void chat.send(text, settings);
+  };
+
   /** 대화 도중 페이지 붙이기 */
   const attachCurrentPage = async () => {
     if (!tab) return;
@@ -875,10 +904,9 @@ export default function App() {
           agentMode={agentMode}
           focusToken={composerFocus}
           onChange={setDraft}
-          onSend={(t) => {
+          onSend={(text) => {
             setDraft('');
-            if (agentMode) void startAgent(t);
-            else void chat.send(t, settings);
+            void sendTyped(text);
           }}
           onSlash={runSlash}
           onStop={chat.stop}
